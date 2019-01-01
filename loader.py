@@ -80,7 +80,13 @@ class EceiDataset(data.Dataset):
 
 	def shots2seqs(self):
 		"""Separate each shot into sequences (generates indices)"""
+		#this is really the number of sequences, just results in too many seqs when Nseq~Nmodel
+		#Nlong = self.stop_idx - self.start_idx + 1
+		#num_seq_frac = (Nlong - self.Nseq + 1)/(self.Nseq - self.Nmodel + 1)
+		#num_seq = np.ceil(num_seq_frac).astype(int)
+		#this was the old number of sequences, not correct
 		num_seq = np.ceil((self.stop_idx - self.start_idx + 1) / float(self.Nseq)).astype(int)
+		
 		self.start_idxi = []
 		self.stop_idxi = []
 		self.disrupt_idxi = []
@@ -91,9 +97,12 @@ class EceiDataset(data.Dataset):
 			for m in range(num_seq[i]):
 				self.start_idxi += [m*self.Nseq-m*self.Nmodel+m+starti]
 				self.stop_idxi += [(m+1)*self.Nseq-m*self.Nmodel+m+starti]
-				self.shoti += self.shot[i]
+				self.shoti += [self.shot[i]]
 				#handle partial length sequence at end. TODO: Do I need this?
-				if self.stop_idxi[-1]>stopi: self.stop_idxi[-1] = stopi
+				if self.stop_idxi[-1]>stopi:
+					self.stop_idxi[-1] = stopi
+				if ((self.stop_idxi[-1] - self.start_idxi[-1])<self.Nmodel):
+					self.start_idxi[-1] = self.stop_idxi[-1] - self.Nmodel
 
 				if (self.disrupt_idx[i]>=self.start_idxi[-1]) and (self.disrupt_idx[i]<=self.stop_idxi[-1]):
 					self.disrupt_idxi += [self.disrupt_idx[i]]
@@ -101,9 +110,9 @@ class EceiDataset(data.Dataset):
 					self.disrupt_idxi += [np.nan]
 
 				if np.isnan(self.disrupt_idx[i]):
-					self.shoti_type += ['disrupt']
-				else:
 					self.shoti_type += ['clear']
+				else:
+					self.shoti_type += ['disrupt']
 
 	def calc_label_weights(self):
 		""""""
@@ -130,11 +139,10 @@ class EceiDataset(data.Dataset):
 		"""TODO, read the data from file"""
 		f = h5py.File(self.root+
 					  self.shoti_type[index]+'/'+
-					  self.shoti[index]+'.h5')
-		X = f['LFS'][self.start_idxi[index]:self.stop_idxi[index]]
+					  str(self.shoti[index])+'.h5')
+		X = f['LFS'][...,self.start_idxi[index]:self.stop_idxi[index]]
 		f.close()
-		y = np.zeros(x.shape)
-		
+		y = np.zeros(X.shape)
 
 		return X,y
 
