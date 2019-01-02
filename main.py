@@ -52,7 +52,12 @@ steps = 0
 
 print(args)
 dataset = EceiDataset(root,clear_file,disrupt_file)
-train_loader, val_loader, test_loader = data_generator(dataset, batch_size)
+#create the indices for train/val/test split
+dataset.train_val_test_split()
+#create data loaders
+train_loader, val_loader, test_loader = data_generator(dataset, batch_size, 
+                                                        distributed=args.distributed,
+                                                        num_workers=args.workers)
 
 channel_sizes = [args.nhid] * args.levels
 #TODO: dilation optional input
@@ -91,7 +96,7 @@ def train(epoch):
             train_loss = 0
 
 
-#for the validation set
+#for the validation and test set
 def evaluate(epoch):
     model.eval()
     loss = 0

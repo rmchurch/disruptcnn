@@ -4,7 +4,7 @@ import numpy as np
 import torch.utils.data as data
 import h5py
 from sklearn.model_selection import train_test_split
-from torch.utils.data import SubsetRandomSampler
+#from torch.utils.data import SubsetRandomSampler
 
 class EceiDataset(data.Dataset):
 	"""ECEi dataset"""
@@ -65,16 +65,17 @@ class EceiDataset(data.Dataset):
 		#disrupt_idx < idx < stop_idx: disruptive
 		self.disrupt_idx = np.ceil((tdisrupt-self.Twarn-tstarts)/dt)
 		self.disrupt_idx[tdisrupt<0] = np.nan #TODO: should this be something else? To allow int?
+		self.disrupted = ~np.isnan(self.disrupt_idx) #True if disrupted, False if not
 
 		self.shot = data_all[:,0].astype(int)
+		self.length = len(self.shot)
 
 		#TODO: how to split? Need to know model length (determines overlap), and how long
 		#can fit into GPU
-		self.shots2seqs()
+		#No longer split into sequences at the Dataloader level, chunk later
+		#self.shots2seqs()
 
 		self.calc_label_weights()
-
-		self.length = len(self.start_idxi)
 
 
 
@@ -126,37 +127,68 @@ class EceiDataset(data.Dataset):
 		assert(np.isclose(np.sum(sizes),1.0))
 
 		#TODO: make labels based on each point, NOT just whether has disruptive points?
-		labels = ~np.isnan(disrupt_idxi)
+		labels = self.disrupted
 
-		self.train_indsi,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(self.start_idxi.size),labels,stratify=labels,test_size=np.sum(sizes[1:]))
-		self.val_indsi, self.test_indsi, _, _ = train_test_split(valtest_inds,valtest_labels,stratify=valtest_labels,test_size=sizes[2]/np.sum(sizes[1:]))
+		self.train_inds,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(self.shot.size),labels,
+																					stratify=labels,
+																					test_size=np.sum(sizes[1:]))
+		self.val_inds, self.test_inds, _, _ = train_test_split(valtest_inds,valtest_labels,
+															   stratify=valtest_labels,
+															   test_size=sizes[2]/np.sum(sizes[1:]))
 
 	def __len__(self):
 		"""Return total number of sequences"""
 		return self.length
 
 	def __getitem__(self,index):
-		"""TODO, read the data from file"""
+		"""Read the data from file. Reads the entire sequence from the shot file"""
+		
+		if self.disrupted[index]:
+			shot_type='disrupt'
+		else:
+			shot_type='clear'
+
 		f = h5py.File(self.root+
-					  self.shoti_type[index]+'/'+
-					  str(self.shoti[index])+'.h5')
-		X = f['LFS'][...,self.start_idxi[index]:self.stop_idxi[index]]
+					  shot_type+'/'+
+					  str(self.shot[index])+'.h5')
+		X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]]
 		f.close()
 		y = np.zeros(X.shape)
 
 		return X,y
 
 
-def data_generator(dataset,batch_size):
-	"""Generate the loader objects for the train,validate, and test sets"""
+def data_generator(dataset,batch_size,distributed=False,num_workers=0):
+	"""Generate the loader objects for the train,validate, and test sets
+	dataset: EceiDataset object
+	distributed: (True/False) using distributed workers
+	num_workers: Number of processes"""
 
-	train_sampler = SubsetRandomSampler(dataset.train_indsi)
-	valid_sampler = SubsetRandomSampler(dataset.val_indsi)
-	test_sampler = SubsetRandomSampler(dataset.test_indsi)
-	train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-	                                           sampler=train_sampler)
-	valid_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                       sampler=valid_sampler)
-	test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-	                                           sampler=test_sampler)
+	if not hasattr(dataset,'train_inds'):
+		dataset.train_val_test_split()
+
+	#create data subsets, based on indices created
+	train_dataset = data.Subset(dataset,dataset.train_inds)
+	val_dataset = data.Subset(dataset,dataset.val_inds)
+	test_dataset = data.Subset(dataset,dataset.test_inds)
+
+	#shuffle dataset each epoch for training data using DistrbutedSampler. Also splits among workers. 
+	if distributed:
+		train_sampler = data.distributed.DistributedSampler(train_dataset)
+	else:
+		train_sampler = None
+	
+	#create data loaders for train/val/test datasets
+	train_loader = data.DataLoader(
+		train_dataset, batch_size=batch_size, shuffle=(train_sampler is None),
+		num_workers=num_workers, pin_memory=True, sampler=train_sampler)
+
+	val_loader = data.DataLoader(
+		val_dataset, batch_size=batch_size, shuffle=False,
+		num_workers=num_workers, pin_memory=True)
+
+	test_loader = data.DataLoader(
+		val_dataset, batch_size=batch_size, shuffle=False,
+		num_workers=num_workers, pin_memory=True)
+	
 	return train_loader,val_loader,test_loader
