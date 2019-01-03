@@ -153,7 +153,11 @@ class EceiDataset(data.Dataset):
 					  str(self.shot[index])+'.h5')
 		X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]]
 		f.close()
+		#label for clear(=0) or disrupted(=1, or weighted)
 		y = np.zeros(X.shape)
+		if self.disrupted[index]:
+			#TODO: class weighting beyond constant
+			y[self.disrupt_idx:] = 1
 
 		return X,y
 
@@ -188,7 +192,7 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0):
 		num_workers=num_workers, pin_memory=True)
 
 	test_loader = data.DataLoader(
-		val_dataset, batch_size=batch_size, shuffle=False,
+		test_dataset, batch_size=batch_size, shuffle=False,
 		num_workers=num_workers, pin_memory=True)
 	
 	return train_loader,val_loader,test_loader

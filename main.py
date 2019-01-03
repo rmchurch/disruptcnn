@@ -2,11 +2,10 @@ import torch
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
-from TCN.mnist_pixel.utils import data_generator
-from TCN.mnist_pixel.model import TCN
 import numpy as np
 import argparse
 from disruptcnn.loader import data_generator, EceiDataset
+from disruptcnn.model import TCN
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 parser.add_argument('--batch_size', type=int, default=8, metavar='N',
@@ -75,6 +74,8 @@ def train(epoch):
     global steps
     train_loss = 0
     model.train()
+    if args.distributed:
+        train_loader.sampler.set_epoch(epoch)
     for batch_idx, (data, target) in enumerate(train_loader):
         if args.cuda: data, target = data.cuda(), target.cuda()
         data = data.view(-1, input_channels, seq_length)
