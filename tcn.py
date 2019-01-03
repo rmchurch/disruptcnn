@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
+import numpy as np
+#import torch.nn.init as init
 
 
 class Chomp1d(nn.Module):
@@ -17,12 +19,22 @@ class TemporalBlock(nn.Module):
         super(TemporalBlock, self).__init__()
         self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
+        # self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
+        #                            stride=stride, padding=padding, dilation=dilation)
+        # init.constant(self.conv1.weight, 1.0)
+        # init.constant(self.conv1.bias, 0.0)
+        
         self.chomp1 = Chomp1d(padding)
         self.relu1 = nn.ReLU()
         self.dropout1 = nn.Dropout(dropout)
 
         self.conv2 = weight_norm(nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
+        # self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
+        #                                    stride=stride, padding=padding, dilation=dilation)
+        # init.constant(self.conv2.weight, 1.0)
+        # init.constant(self.conv2.bias, 0.0)
+
         self.chomp2 = Chomp1d(padding)
         self.relu2 = nn.ReLU()
         self.dropout2 = nn.Dropout(dropout)
@@ -46,16 +58,18 @@ class TemporalBlock(nn.Module):
 
 
 class TemporalConvNet(nn.Module):
-    def __init__(self, num_inputs, num_channels, kernel_size=2, dropout=0.2):
+    def __init__(self, num_inputs, num_channels, dilation_size = 2, kernel_size=2, dropout=0.2):
         super(TemporalConvNet, self).__init__()
         layers = []
         num_levels = len(num_channels)
+        if np.isscalar(dilation_size): dilation_size = [dilation_size**i for i in range(num_levels)]
         for i in range(num_levels):
-            dilation_size = 2 ** i
+            dilation = dilation_size[i]
             in_channels = num_inputs if i == 0 else num_channels[i-1]
             out_channels = num_channels[i]
-            layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1, dilation=dilation_size,
-                                     padding=(kernel_size-1) * dilation_size, dropout=dropout)]
+            layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1,
+                                     padding=(kernel_size-1) * dilation, dilation=dilation, 
+                                     dropout=dropout)]
 
         self.network = nn.Sequential(*layers)
 
