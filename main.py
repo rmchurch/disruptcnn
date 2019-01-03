@@ -32,6 +32,19 @@ parser.add_argument('--nhid', type=int, default=25,
                     help='number of hidden units per layer (default: 25)')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed (default: 1111)')
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+                    help='number of data loading workers (default: 4)')
+parser.add_argument('--world-size', default=-1, type=int,
+                    help='number of nodes for distributed training')
+parser.add_argument('--rank', default=-1, type=int,
+                    help='node rank for distributed training')
+parser.add_argument('--dist-backend', default='nccl', type=str,
+                    help='distributed backend')
+parser.add_argument('--multiprocessing-distributed', action='store_true',
+                    help='Use multi-processing distributed training to launch '
+                         'N processes per node, which has N GPUs. This is the '
+                         'fastest way to use PyTorch for either single node or '
+                         'multi node data parallel training')
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
@@ -39,18 +52,23 @@ if torch.cuda.is_available():
     if not args.cuda:
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
-root = '/gpfs/rchurchi/ecei_d3d/'
+args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+
+if not args.distributed: args.workers = 0
+
+root = '/scratch/gpfs/rmc2/ecei_d3d/'
+data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
 disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
 batch_size = args.batch_size
 n_classes = 2
 input_channels = 160
-seq_length = int(Nseq) #TODO: This might be different from how I defined it in loader.py
+#seq_length = int(Nseq) #TODO: This might be different from how I defined it in loader.py
 epochs = args.epochs
 steps = 0
 
 print(args)
-dataset = EceiDataset(root,clear_file,disrupt_file)
+dataset = EceiDataset(data_root,clear_file,disrupt_file)
 #create the indices for train/val/test split
 dataset.train_val_test_split()
 #create data loaders
@@ -78,7 +96,7 @@ def train(epoch):
         train_loader.sampler.set_epoch(epoch)
     for batch_idx, (data, target) in enumerate(train_loader):
         if args.cuda: data, target = data.cuda(), target.cuda()
-        data = data.view(-1, input_channels, seq_length)
+        data = data.view(-1, input_channels, -1)
 
         data, target = Variable(data), Variable(target)
         optimizer.zero_grad()
