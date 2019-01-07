@@ -60,12 +60,19 @@ root = '/scratch/gpfs/rmc2/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
 disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
-batch_size = args.batch_size
-n_classes = 2
+batch_size = 1#args.batch_size
+n_classes = 1 #for binary classification
 input_channels = 160
-#seq_length = int(Nseq) #TODO: This might be different from how I defined it in loader.py
 epochs = args.epochs
 steps = 0
+#seq_length = int(Nseq) #TODO: This might be different from how I defined it in loader.py
+#TODO remove, use general passed in instead
+args.nhid = 20
+args.levels = 5
+dilation_sizes = [1,10,100,1000,6783] #dilation=10, except last which is set to give receptive field ~Nmodel=300,000
+seq_length = 1000000 #found by taking receptive field, and scaling for 15GB of GPU memory 
+args.log_interval = 1
+#TODO have to write overlapping sequences, not just put in
 
 print(args)
 dataset = EceiDataset(data_root,clear_file,disrupt_file)
@@ -79,7 +86,7 @@ train_loader, val_loader, test_loader = data_generator(dataset, batch_size,
 channel_sizes = [args.nhid] * args.levels
 #TODO: dilation optional input
 kernel_size = args.ksize
-model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
+model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout,dilation_size=dilation_sizes)
 
 if args.cuda:
     model.cuda()
@@ -94,24 +101,25 @@ def train(epoch):
     model.train()
     if args.distributed:
         train_loader.sampler.set_epoch(epoch)
-    for batch_idx, (data, target) in enumerate(train_loader):
-        if args.cuda: data, target = data.cuda(), target.cuda()
-        data = data.view(-1, input_channels, -1)
-
-        data, target = Variable(data), Variable(target)
+    for batch_idx, (data_shot, target_shot) in enumerate(train_loader):
         optimizer.zero_grad()
-        output = model(data)
-        loss = F.nll_loss(output, target)
-        loss.backward()
-        if args.clip > 0:
-            torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+        for minibatch_idx,(data,target) in enumerate(zip(torch.split(data_shot,seq_length,dim=-1),torch.split(target_shot,seq_length,dim=-1))):
+            if args.cuda: data, target = data.cuda(), target.cuda()
+            data = data.view(batch_size, input_channels, -1)
+            print data.shape
+            data, target = Variable(data), Variable(target)
+            output = model(data)
+            loss = F.binary_cross_entropy(output, target.float()) #not sure why expects float for target?
+            loss.backward()
+            if args.clip > 0:
+                torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+            train_loss += loss
+            steps += seq_length
         optimizer.step()
-        train_loss += loss
-        steps += seq_length
         if batch_idx > 0 and batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tSteps: {}'.format(
-                epoch, batch_idx * batch_size, len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), train_loss.data[0]/args.log_interval, steps))
+                        epoch, batch_idx * batch_size, len(train_loader.dataset),
+                        100. * batch_idx / len(train_loader), train_loss.data[0]/args.log_interval, steps))
             train_loss = 0
 
 
