@@ -24,11 +24,11 @@ class EceiDataset(data.Dataset):
 			  SNR min - Minimum SNR of entire signal
 			  t_flat_start [ms] - start time of flattop
 			  t_flat_duration [ms] - time duration of flattop
-			  tdisrupt [ms] - Time of disruption (corresponds to max dIp/dt)
+			  tdisrupt [ms] - Time of disruption (corresponds to max dIp/dt). -1000 if not disrupted.
 		train: 
 		flattop_only: Use only flattop times
 		Twarn: time before disruption we wish to begin labelling as "disruptive"
-		Nmodel: Number of time points used in neutral network to produce single timepoint prediction
+		Nmodel: Number of time points used in neutral network to produce single timepoint prediction (receptive field)
 		Nseq: Number of time points to divide data into (set by GPU memory constraints)
 		"""
 		self.root = root
@@ -63,9 +63,9 @@ class EceiDataset(data.Dataset):
 
 		#start_idx < idx < disrupt_idx: non-disruptive
 		#disrupt_idx < idx < stop_idx: disruptive
-		self.disrupt_idx = np.ceil((tdisrupt-self.Twarn-tstarts)/dt)
-		self.disrupt_idx[tdisrupt<0] = np.nan #TODO: should this be something else? To allow int?
-		self.disrupted = ~np.isnan(self.disrupt_idx) #True if disrupted, False if not
+		self.disrupt_idx = np.ceil((tdisrupt-self.Twarn-tstarts)/dt).astype(int)
+		self.disrupt_idx[tdisrupt<0] = -1000 #TODO: should this be something else? nan isnt possible with int
+		self.disrupted = self.disrupt_idx>0 #True if disrupted, False if not
 
 		self.shot = data_all[:,0].astype(int)
 		self.length = len(self.shot)
@@ -154,10 +154,11 @@ class EceiDataset(data.Dataset):
 		X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]]
 		f.close()
 		#label for clear(=0) or disrupted(=1, or weighted)
-		y = np.zeros(X.shape)
+		y = np.zeros((X.shape[-1],),dtype=int)
 		if self.disrupted[index]:
 			#TODO: class weighting beyond constant
-			y[self.disrupt_idx:] = 1
+			y[self.disrupt_idx[index]:] = 1
+        #y[0:self.Nmodel] = -1000 #TODO index -1000 to ignore in loss
 
 		return X,y
 
