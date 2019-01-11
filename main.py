@@ -70,7 +70,8 @@ steps = 0
 args.nhid = 20
 args.levels = 5
 dilation_sizes = [1,10,100,1000,6783] #dilation=10, except last which is set to give receptive field ~Nmodel=300,000
-seq_length = 1000000 #found by taking receptive field, and scaling for 15GB of GPU memory 
+Nsub = 1000000 #found by taking receptive field, and scaling for 15GB of GPU memory #TODO automate
+Nrecept = 300000
 args.log_interval = 1
 #TODO have to write overlapping sequences, not just put in
 
@@ -84,37 +85,56 @@ train_loader, val_loader, test_loader = data_generator(dataset, batch_size,
                                                         num_workers=args.workers)
 
 channel_sizes = [args.nhid] * args.levels
-#TODO: dilation optional input
 kernel_size = args.ksize
-model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout,dilation_size=dilation_sizes)
+model = TCN(input_channels, n_classes, channel_sizes, 
+            kernel_size=kernel_size, 
+            dropout=args.dropout,
+            dilation_size=dilation_sizes)
 
 if args.cuda:
     model.cuda()
+
+def process_seq(x,target,Nsub):
+    '''Splits apart sequence into equal, overlapping subsequences of length Nsub, with overlap Nrecept
+    Does accumulated gradients method to avoid large GPU memory usage
+    '''
+    N = x.shape[-1] #length of entire sequence
+    num_seq_frac = (N - Nsub)/float(Nsub - Nrecept + 1)+1
+    num_seq = np.ceil(num_seq_frac).astype(int)
+    total_losses = 0
+    for m in range(num_seq):
+        start_idx =    m*Nsub - m*Nrecept + m
+        stop_idx = (m+1)*Nsub - m*Nrecept + m
+        if stop_idx>N: stop_idx = N
+        if ((stop_idx-start_idx)<Nrecept):
+            start_idx = stop_idx - Nrecept
+        ys = model(x[...,start_idx:stop_idx])
+        ts = target[...,start_idx:stop_idx]
+        #do mean of loss by hand to handle unequal sequence lengths
+        loss = F.binary_cross_entropy(ys[...,Nrecept-1:],ts[...,Nrecept-1:],reduction='sum')/(N-Nrecept+1)
+        loss.backward()
+        if args.clip > 0:
+            torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+        total_losses += loss.item()
+    return total_losses
 
 lr = args.lr
 #optimizer = getattr(optim, args.optim)(model.parameters(), lr=lr)
 optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, nesterov=True)
 
 def train(epoch):
-    global steps
+    global steps #TODO: why do I need steps??
     train_loss = 0
     model.train()
     if args.distributed:
         train_loader.sampler.set_epoch(epoch)
-    for batch_idx, (data_shot, target_shot) in enumerate(train_loader):
+    for batch_idx, (data, target) in enumerate(train_loader):
         optimizer.zero_grad()
-        for minibatch_idx,(data,target) in enumerate(zip(torch.split(data_shot,seq_length,dim=-1),torch.split(target_shot,seq_length,dim=-1))):
-            if args.cuda: data, target = data.cuda(), target.cuda()
-            data = data.view(batch_size, input_channels, -1)
-            print data.shape
-            data, target = Variable(data), Variable(target)
-            output = model(data)
-            loss = F.binary_cross_entropy(output, target.float()) #not sure why expects float for target?
-            loss.backward()
-            if args.clip > 0:
-                torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
-            train_loss += loss
-            steps += seq_length
+        if args.cuda: data, target = data.cuda(), target.cuda() #TODO: verify can put ENTIRE sequence on GPU
+        data = data.view(batch_size, input_channels, -1)
+        #split data into subsequences to process
+        train_loss += process_seq(data,target,Nsub)
+        steps += data.shape[-1]
         optimizer.step()
         if batch_idx > 0 and batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tSteps: {}'.format(
@@ -130,14 +150,12 @@ def evaluate(epoch):
     correct = 0
     with torch.no_grad(): #turns off backprop, saves computation
         for data, target in val_loader:
-            if args.cuda:
-                data, target = data.cuda(), target.cuda()
+            if args.cuda: data, target = data.cuda(), target.cuda()
             data = data.view(-1, input_channels, seq_length)
             if args.permute:
                 data = data[:, :, permute]
-            data, target = Variable(data, volatile=True), Variable(target)
             output = model(data)
-            loss += F.nll_loss(output, target, size_average=False).data[0]
+            loss += F.binary_cross_entropy(output, target, size_average=False).data[0]
             #TODO: Enter validation loss here, modify from this simple
             pred = output.data.max(1, keepdim=True)[1]
             correct += pred.eq(target.data.view_as(pred)).cpu().sum()
