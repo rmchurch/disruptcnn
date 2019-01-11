@@ -111,7 +111,7 @@ class EceiDataset(data.Dataset):
 		X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]]
 		f.close()
 		#label for clear(=0) or disrupted(=1, or weighted)
-		y = np.zeros((X.shape[-1],),dtype=int)
+		y = np.zeros((X.shape[-1]),dtype=X.dtype)
 		if self.disrupted[index]:
 			#TODO: class weighting beyond constant
 			y[self.disrupt_idx[index]:] = 1
