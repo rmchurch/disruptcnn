@@ -11,7 +11,7 @@ class EceiDataset(data.Dataset):
 
 	def __init__(self,root,clear_file,disrupt_file,
 					  train=True,flattop_only=True,
-					  Twarn=300,Nmodel=300000,Nseq=300000):
+					  Twarn=300):
 		"""Initialize
 		root: Directory root. Must have 'disrupt/' and 'clear/' as subdirectories
 		clear_file, disrupt_file: File paths for disrupt/clear ECEi datasets.
@@ -28,17 +28,11 @@ class EceiDataset(data.Dataset):
 		train: 
 		flattop_only: Use only flattop times
 		Twarn: time before disruption we wish to begin labelling as "disruptive"
-		Nmodel: Number of time points used in neutral network to produce single timepoint prediction (receptive field)
-		Nseq: Number of time points to divide data into (set by GPU memory constraints)
 		"""
 		self.root = root
 		self.train = train #training set or test set TODO: Do I need this?
 
 		self.Twarn = Twarn #in ms
-
-		assert Nseq>=Nmodel, "Input Nseq has to be larger than or equal to Nmodel"
-		self.Nseq = Nseq
-		self.Nmodel = Nmodel
 
 		data_disrupt = np.loadtxt(disrupt_file,skiprows=1)
 		data_clear = np.loadtxt(clear_file,skiprows=1)
@@ -77,43 +71,6 @@ class EceiDataset(data.Dataset):
 
 		self.calc_label_weights()
 
-
-
-	def shots2seqs(self):
-		"""Separate each shot into sequences (generates indices)"""
-		#this is really the number of sequences, just results in too many seqs when Nseq~Nmodel
-		#Nlong = self.stop_idx - self.start_idx + 1
-		#num_seq_frac = (Nlong - self.Nseq + 1)/(self.Nseq - self.Nmodel + 1)
-		#num_seq = np.ceil(num_seq_frac).astype(int)
-		#this was the old number of sequences, not correct
-		num_seq = np.ceil((self.stop_idx - self.start_idx + 1) / float(self.Nseq)).astype(int)
-		
-		self.start_idxi = []
-		self.stop_idxi = []
-		self.disrupt_idxi = []
-		self.shoti = []
-		self.shoti_type = []
-
-		for i,(starti,stopi) in enumerate(zip(self.start_idx,self.stop_idx)):
-			for m in range(num_seq[i]):
-				self.start_idxi += [m*self.Nseq-m*self.Nmodel+m+starti]
-				self.stop_idxi += [(m+1)*self.Nseq-m*self.Nmodel+m+starti]
-				self.shoti += [self.shot[i]]
-				#handle partial length sequence at end. TODO: Do I need this?
-				if self.stop_idxi[-1]>stopi:
-					self.stop_idxi[-1] = stopi
-				if ((self.stop_idxi[-1] - self.start_idxi[-1])<self.Nmodel):
-					self.start_idxi[-1] = self.stop_idxi[-1] - self.Nmodel
-
-				if (self.disrupt_idx[i]>=self.start_idxi[-1]) and (self.disrupt_idx[i]<=self.stop_idxi[-1]):
-					self.disrupt_idxi += [self.disrupt_idx[i]]
-				else:
-					self.disrupt_idxi += [np.nan]
-
-				if np.isnan(self.disrupt_idx[i]):
-					self.shoti_type += ['clear']
-				else:
-					self.shoti_type += ['disrupt']
 
 	def calc_label_weights(self):
 		""""""
@@ -158,7 +115,6 @@ class EceiDataset(data.Dataset):
 		if self.disrupted[index]:
 			#TODO: class weighting beyond constant
 			y[self.disrupt_idx[index]:] = 1
-        #y[0:self.Nmodel] = -1000 #TODO index -1000 to ignore in loss
 
 		return X,y
 
