@@ -6,6 +6,7 @@ import numpy as np
 import argparse
 from disruptcnn.loader import data_generator, EceiDataset
 from disruptcnn.model import TCN
+import time
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 parser.add_argument('--batch_size', type=int, default=8, metavar='N',
@@ -137,9 +138,9 @@ def train(epoch):
         steps += data.shape[-1]
         optimizer.step()
         if batch_idx > 0 and batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tSteps: {}'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tSteps: {}\tTime: {}'.format(
                         epoch, batch_idx * batch_size, len(train_loader.dataset),
-                        100. * batch_idx / len(train_loader), train_loss.data[0]/args.log_interval, steps))
+                        100. * batch_idx / len(train_loader), train_loss/args.log_interval, steps,(time.time()-tstart)))
             train_loss = 0
 
 
@@ -168,6 +169,7 @@ def evaluate(epoch):
 
 
 if __name__ == "__main__":
+    tstart = time.time()
     for epoch in range(1, epochs+1):
         train(epoch)
         evaluate(epoch)
