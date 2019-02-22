@@ -11,7 +11,8 @@ class EceiDataset(data.Dataset):
 
     def __init__(self,root,clear_file,disrupt_file,
                       train=True,flattop_only=True,
-                      Twarn=300):
+                      Twarn=300,
+                      test=0):
         """Initialize
         root: Directory root. Must have 'disrupt/' and 'clear/' as subdirectories
         clear_file, disrupt_file: File paths for disrupt/clear ECEi datasets.
@@ -28,11 +29,13 @@ class EceiDataset(data.Dataset):
         train: 
         flattop_only: Use only flattop times
         Twarn: time before disruption we wish to begin labelling as "disruptive"
+        test: number of recurring data points to give
         """
         self.root = root
         self.train = train #training set or test set TODO: Do I need this?
 
         self.Twarn = Twarn #in ms
+        self.test = test
 
         data_disrupt = np.loadtxt(disrupt_file,skiprows=1)
         data_clear = np.loadtxt(clear_file,skiprows=1)
@@ -64,22 +67,44 @@ class EceiDataset(data.Dataset):
 
         self.shot = data_all[:,0].astype(int)
         self.length = len(self.shot)
+        if self.test > 0: self.length = self.test
 
         #TODO: how to split? Need to know model length (determines overlap), and how long
         #can fit into GPU
         #No longer split into sequences at the Dataloader level, chunk later
         #self.shots2seqs()
 
+        #create offsets placeholder
+        filename = self.create_filename(0)
+        f = h5py.File(filename,'r')
+        self.offsets = np.zeros(f['offsets'].shape+(self.shot.size,),dtype=f['offsets'].dtype)
+
         self.calc_label_weights()
 
+        if self.test > 0:
+            #preload test data for speed
+            self.test_data = []
+            labels = self.disrupted
+            if self.test==1:
+                disinds = np.where(self.disrupted)[0]
+                self.test_indices = disinds[np.random.randint(disinds.size,size=1)]
+            else:
+                _,self.test_indices,_,_ = train_test_split(np.arange(self.shot.size),labels,
+                                                       stratify=labels,
+                                                       test_size=self.test)
+            for ind in self.test_indices:
+                self.test_data += [self.read_data(ind)]
 
-    def calc_label_weights(self):
+    def calc_label_weights(self,inds=None):
         """Calculated weights to use in the criterion"""
         #for now, do a constant weight on the disrupted class, to balance the unbalanced set
         #TODO implement increasing weight towards final disruption
-        N = np.sum(self.stop_idx - self.start_idx)
-        Ndisrupt = np.sum(self.stop_idx - self.disrupt_idx)
-        self.weight = N/Ndisrupt
+        if inds is None: inds = np.arange(len(self.shot))
+        N = np.sum(self.stop_idx[inds] - self.start_idx[inds])
+        disinds = inds[self.disrupted[inds]]
+        Ndisrupt = np.sum(self.stop_idx[disinds] - self.disrupt_idx[disinds])
+        Nnondisrupt = N - Ndisrupt
+        self.weight = Nnondisrupt/Ndisrupt
 
     def train_val_test_split(self,sizes=[0.8,0.1,0.1]):
         """Creates indices to split data into train, validation, and test datasets. 
@@ -92,12 +117,38 @@ class EceiDataset(data.Dataset):
         #TODO: make labels based on each point, NOT just whether has disruptive points?
         labels = self.disrupted
 
-        self.train_inds,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(self.shot.size),labels,
-                                                                                    stratify=labels,
-                                                                                    test_size=np.sum(sizes[1:]))
-        self.val_inds, self.test_inds, _, _ = train_test_split(valtest_inds,valtest_labels,
-                                                               stratify=valtest_labels,
-                                                               test_size=sizes[2]/np.sum(sizes[1:]))
+        if self.test > 0:
+            self.train_inds = self.test_indices
+            self.val_inds = []
+            self.test_inds = []
+        else:
+            self.train_inds,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(self.shot.size),labels,
+                                                                                        stratify=labels,
+                                                                                        test_size=np.sum(sizes[1:]))
+            self.val_inds, self.test_inds, _, _ = train_test_split(valtest_inds,valtest_labels,
+                                                                   stratify=valtest_labels,
+                                                                   test_size=sizes[2]/np.sum(sizes[1:]))
+        self.calc_label_weights(inds=self.train_inds)
+
+    def create_filename(self,index):
+        if self.disrupted[index]:
+            shot_type='disrupt'
+        else:
+            shot_type='clear'
+
+        return self.root+shot_type+'/'+str(self.shot[index])+'.h5'
+
+    def read_data(self,index):
+        filename = self.create_filename(index)
+        f = h5py.File(filename,'r')
+        #check if weve read in offsets yet
+        if np.all(self.offsets[...,index]==0):
+            self.offsets[...,index] = f['offsets'][...]
+        #read data, remove offset
+        X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]] - self.offsets[...,index][...,np.newaxis]
+        f.close()
+        return X
+
 
     def __len__(self):
         """Return total number of sequences"""
@@ -105,17 +156,15 @@ class EceiDataset(data.Dataset):
 
     def __getitem__(self,index):
         """Read the data from file. Reads the entire sequence from the shot file"""
-        
-        if self.disrupted[index]:
-            shot_type='disrupt'
+        #print('__getitem__'+str(index)) 
+        if self.test > 0:
+            ind_test = np.where(self.test_indices==index)[0][0] #since the loader has inds up to len(self.shot)
+            X = self.test_data[ind_test]
+            #index = self.test_indices[ind_test] #put in global index
+            #X = self.read_data(index)
         else:
-            shot_type='clear'
+            X = self.read_data(index)
 
-        f = h5py.File(self.root+
-                      shot_type+'/'+
-                      str(self.shot[index])+'.h5','r')
-        X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]]
-        f.close()
         #label for clear(=0) or disrupted(=1, or weighted)
         target = np.zeros((X.shape[-1]),dtype=X.dtype)
         weight = np.ones((X.shape[-1]),dtype=X.dtype)
@@ -125,6 +174,7 @@ class EceiDataset(data.Dataset):
             weight[(self.disrupt_idx[index]-self.start_idx[index]+1):] = self.weight
 
         return X,target,index.item(),weight
+
 
 
 def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replicas=None,rank=None):
