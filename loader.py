@@ -12,7 +12,8 @@ class EceiDataset(data.Dataset):
     def __init__(self,root,clear_file,disrupt_file,
                       train=True,flattop_only=True,
                       Twarn=300,
-                      test=0):
+                      test=0,test_indices=None,
+                      weight_balance=True):
         """Initialize
         root: Directory root. Must have 'disrupt/' and 'clear/' as subdirectories
         clear_file, disrupt_file: File paths for disrupt/clear ECEi datasets.
@@ -29,7 +30,9 @@ class EceiDataset(data.Dataset):
         train: 
         flattop_only: Use only flattop times
         Twarn: time before disruption we wish to begin labelling as "disruptive"
-        test: number of recurring data points to give
+        test: training set size (# shots), for testing of overfitting purposes
+        test_indices: List of specific global indices (len(test_indices) must match test)
+        weight_balance: For imbalanced label sets, uses weight to balance in binary cross entropy  (default True)
         """
         self.root = root
         self.train = train #training set or test set TODO: Do I need this?
@@ -89,9 +92,13 @@ class EceiDataset(data.Dataset):
                 disinds = np.where(self.disrupted)[0]
                 self.test_indices = disinds[np.random.randint(disinds.size,size=1)]
             else:
-                _,self.test_indices,_,_ = train_test_split(np.arange(self.shot.size),labels,
+                if test_indices is None:
+                    _,self.test_indices,_,_ = train_test_split(np.arange(self.shot.size),labels,
                                                        stratify=labels,
                                                        test_size=self.test)
+                else:
+                    assert len(test_indices)==self.test
+                    self.test_indices = np.array(test_indices)
             for ind in self.test_indices:
                 self.test_data += [self.read_data(ind)]
 
@@ -100,11 +107,14 @@ class EceiDataset(data.Dataset):
         #for now, do a constant weight on the disrupted class, to balance the unbalanced set
         #TODO implement increasing weight towards final disruption
         if inds is None: inds = np.arange(len(self.shot))
-        N = np.sum(self.stop_idx[inds] - self.start_idx[inds])
-        disinds = inds[self.disrupted[inds]]
-        Ndisrupt = np.sum(self.stop_idx[disinds] - self.disrupt_idx[disinds])
-        Nnondisrupt = N - Ndisrupt
-        self.weight = Nnondisrupt/Ndisrupt
+        if self.weight_balance:
+            N = np.sum(self.stop_idx[inds] - self.start_idx[inds])
+            disinds = inds[self.disrupted[inds]]
+            Ndisrupt = np.sum(self.stop_idx[disinds] - self.disrupt_idx[disinds])
+            Nnondisrupt = N - Ndisrupt
+            self.weight = Nnondisrupt/Ndisrupt
+        else:
+            self.weight = 1
 
     def train_val_test_split(self,sizes=[0.8,0.1,0.1]):
         """Creates indices to split data into train, validation, and test datasets. 

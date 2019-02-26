@@ -1,6 +1,9 @@
 #!/usr/bin python
+import random
+import warnings
 import torch
 import torch.distributed as dist
+import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
@@ -55,6 +58,8 @@ parser.add_argument('--iterations-valid', type=int, default=200,
                     help='iteration period to run validation(default: 200)')
 parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: SGD)')
+parser.add_argument('--weight-balance', action='store_false',
+                    help='Balance an imbalanced dataset with weight in cross-entropy loss (default: True)')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
@@ -81,6 +86,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'multi node data parallel training')
 parser.add_argument('--test', default=0, type=int, metavar='N',
                     help='runs on single example, to verify model can overfit (default: 0)')
+parser.add_argument('--test-indices', default=None, nargs='*',type=int,
+                    help='list of global indices to use (default: None)')
 
 
 
@@ -194,7 +201,9 @@ def main_worker(gpu,ngpus_per_node,args):
         # model = torch.nn.DataParallel(model).cuda()
 
     print(args)
-    dataset = EceiDataset(data_root,clear_file,disrupt_file,test=args.test)
+    dataset = EceiDataset(data_root,clear_file,disrupt_file,
+                          test=args.test,test_indices=args.test_indices,
+                          weight_balance=args.weight_balance)
     #create the indices for train/val/test split
     dataset.train_val_test_split()
     #create data loaders
@@ -264,7 +273,9 @@ def main_worker(gpu,ngpus_per_node,args):
                 print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIndex: %d\tDisrupted: %d\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
                             epoch, (batch_idx*args.world_size+args.rank), len(train_loader.dataset),
                             100. * (batch_idx*args.world_size+args.rank)  / len(train_loader.dataset), global_index, train_loader.dataset.dataset.disrupted[global_index],train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
-
+        
+        print('Train Epoch: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                            epoch, total_loss, steps,(time.time()-args.tstart),lr_epoch))
     if (args.test>0):
         plt.figure(figsize=[6.40,7.40])
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
