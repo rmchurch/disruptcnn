@@ -58,8 +58,10 @@ parser.add_argument('--iterations-valid', type=int, default=200,
                     help='iteration period to run validation(default: 200)')
 parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: SGD)')
-parser.add_argument('--weight-balance', action='store_false',
-                    help='Balance an imbalanced dataset with weight in cross-entropy loss (default: True)')
+parser.add_argument('--label-balance', type=str,default='const',
+                    help="Type of label balancing. 'const' or 'none', (default: const)")
+parser.add_argument('--accumulate', action='store_true',
+                    help='accumulate gradients over entire batch, i.e. shot (default: False)')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
@@ -88,6 +90,8 @@ parser.add_argument('--test', default=0, type=int, metavar='N',
                     help='runs on single example, to verify model can overfit (default: 0)')
 parser.add_argument('--test-indices', default=None, nargs='*',type=int,
                     help='list of global indices to use (default: None)')
+parser.add_argument('--no-normalize', action='store_true',
+                    help='dont normalize the data (default: False)')
 
 
 
@@ -203,7 +207,8 @@ def main_worker(gpu,ngpus_per_node,args):
     print(args)
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
                           test=args.test,test_indices=args.test_indices,
-                          weight_balance=args.weight_balance)
+                          label_balance=args.label_balance,
+                          normalize=(not args.no_normalize))
     #create the indices for train/val/test split
     dataset.train_val_test_split()
     #create data loaders
@@ -313,13 +318,13 @@ def train_seq(data, target, weight, model, optimizer, args):
     #split data into subsequences to process
     train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
                               optimizer=optimizer,weight=weight,
-                              train=True,clip=args.clip)
+                              train=True,clip=args.clip,accumulate=args.accumulate)
     return train_loss
 
 
-def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None):
+def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
     '''Splits apart sequence into equal, overlapping subsequences of length Nsub, with overlap Nrecept
-    Does accumulated gradients method to avoid large GPU memory usage
+    If accumulate=True, does accumulated gradients method to avoid large GPU memory usage
     '''
     if weight is None: weight = torch.ones(target.shape).cuda()
     N = data.shape[-1] #length of entire sequence
@@ -338,19 +343,25 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
         start_idx = N - stop_idx
         stop_idx = N - tmp
 
-        if optimizer is not None:
+        if (optimizer is not None) & ((m==0) or (not accumulate)):
             optimizer.zero_grad()
         ys = model(data[...,start_idx:stop_idx])
         ts = target[...,start_idx:stop_idx]
         ws = weight[...,start_idx:stop_idx]
         #do mean of loss by hand to handle unequal sequence lengths
         loss = F.binary_cross_entropy(ys[...,Nrecept-1:],ts[...,Nrecept-1:],weight=ws[...,Nrecept-1:],reduction='sum')/(N-Nrecept+1)
+        ####REMOVE ME
+        #if accumulate:
+        #    loss = loss/num_seq
+        ####END REMOVE ME
         if train: loss.backward()
         if clip is not None:
             torch.nn.utils.clip_grad_norm(model.parameters(), clip)
         total_losses += loss.item()
-        if optimizer is not None:
+        if (optimizer is not None) & (not accumulate):
             optimizer.step()
+    if accumulate:
+        optimizer.step()
     return total_losses
 
 
