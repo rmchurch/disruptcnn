@@ -4,6 +4,7 @@ import numpy as np
 import torch.utils.data as data
 import h5py
 from sklearn.model_selection import train_test_split
+import os
 #from torch.utils.data import SubsetRandomSampler
 
 class EceiDataset(data.Dataset):
@@ -13,7 +14,7 @@ class EceiDataset(data.Dataset):
                       train=True,flattop_only=True,
                       Twarn=300,
                       test=0,test_indices=None,
-                      weight_balance=True):
+                      label_balance='const',normalize=True):
         """Initialize
         root: Directory root. Must have 'disrupt/' and 'clear/' as subdirectories
         clear_file, disrupt_file: File paths for disrupt/clear ECEi datasets.
@@ -32,13 +33,15 @@ class EceiDataset(data.Dataset):
         Twarn: time before disruption we wish to begin labelling as "disruptive"
         test: training set size (# shots), for testing of overfitting purposes
         test_indices: List of specific global indices (len(test_indices) must match test)
-        weight_balance: For imbalanced label sets, uses weight to balance in binary cross entropy  (default True)
+        label_balance: For imbalanced label sets, uses weight to balance in binary cross entropy  (default True)
         """
         self.root = root
         self.train = train #training set or test set TODO: Do I need this?
 
         self.Twarn = Twarn #in ms
         self.test = test
+        self.label_balance = label_balance
+        self.normalize = normalize
 
         data_disrupt = np.loadtxt(disrupt_file,skiprows=1)
         data_clear = np.loadtxt(clear_file,skiprows=1)
@@ -81,12 +84,21 @@ class EceiDataset(data.Dataset):
         filename = self.create_filename(0)
         f = h5py.File(filename,'r')
         self.offsets = np.zeros(f['offsets'].shape+(self.shot.size,),dtype=f['offsets'].dtype)
+        f.close()
 
+        #read in normalization data (per channel)
+        f = np.load(self.root+'normalization.npz')
+        if flattop_only:
+            self.normalize_mean = f['mean_flat']
+            self.normalize_std = f['std_flat']
+        else:
+            self.normalize_mean = f['mean_all']
+            self.normalize_std = f['std_all']
+
+        #create label weights
         self.calc_label_weights()
 
         if self.test > 0:
-            #preload test data for speed
-            self.test_data = []
             labels = self.disrupted
             if self.test==1:
                 disinds = np.where(self.disrupted)[0]
@@ -99,22 +111,27 @@ class EceiDataset(data.Dataset):
                 else:
                     assert len(test_indices)==self.test
                     self.test_indices = np.array(test_indices)
-            for ind in self.test_indices:
-                self.test_data += [self.read_data(ind)]
+            if self.test<32:
+                #preload test data for speed
+                self.test_data = []
+                for ind in self.test_indices:
+                    self.test_data += [self.read_data(ind)]
 
     def calc_label_weights(self,inds=None):
         """Calculated weights to use in the criterion"""
         #for now, do a constant weight on the disrupted class, to balance the unbalanced set
         #TODO implement increasing weight towards final disruption
         if inds is None: inds = np.arange(len(self.shot))
-        if self.weight_balance:
+        if 'const' in self.label_balance:
             N = np.sum(self.stop_idx[inds] - self.start_idx[inds])
             disinds = inds[self.disrupted[inds]]
             Ndisrupt = np.sum(self.stop_idx[disinds] - self.disrupt_idx[disinds])
             Nnondisrupt = N - Ndisrupt
-            self.weight = Nnondisrupt/Ndisrupt
+            self.pos_weight = 0.5*N/Ndisrupt
+            self.neg_weight = 0.5*N/Nnondisrupt
         else:
-            self.weight = 1
+            self.pos_weight = 1
+            self.neg_weight = 1
 
     def train_val_test_split(self,sizes=[0.8,0.1,0.1]):
         """Creates indices to split data into train, validation, and test datasets. 
@@ -156,6 +173,8 @@ class EceiDataset(data.Dataset):
             self.offsets[...,index] = f['offsets'][...]
         #read data, remove offset
         X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]] - self.offsets[...,index][...,np.newaxis]
+        if self.normalize:
+            X = (X - self.normalize_mean[...,np.newaxis])/self.normalize_std[...,np.newaxis]
         f.close()
         return X
 
@@ -166,22 +185,19 @@ class EceiDataset(data.Dataset):
 
     def __getitem__(self,index):
         """Read the data from file. Reads the entire sequence from the shot file"""
-        #print('__getitem__'+str(index)) 
-        if self.test > 0:
+        if (self.test > 0) & (hasattr(self,'test_data')):
             ind_test = np.where(self.test_indices==index)[0][0] #since the loader has inds up to len(self.shot)
             X = self.test_data[ind_test]
-            #index = self.test_indices[ind_test] #put in global index
-            #X = self.read_data(index)
         else:
             X = self.read_data(index)
 
         #label for clear(=0) or disrupted(=1, or weighted)
         target = np.zeros((X.shape[-1]),dtype=X.dtype)
-        weight = np.ones((X.shape[-1]),dtype=X.dtype)
+        weight = self.neg_weight*np.ones((X.shape[-1]),dtype=X.dtype)
         if self.disrupted[index]:
             #TODO: class weighting beyond constant
             target[(self.disrupt_idx[index]-self.start_idx[index]+1):] = 1
-            weight[(self.disrupt_idx[index]-self.start_idx[index]+1):] = self.weight
+            weight[(self.disrupt_idx[index]-self.start_idx[index]+1):] = self.pos_weight
 
         return X,target,index.item(),weight
 
