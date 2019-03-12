@@ -14,7 +14,7 @@ class EceiDataset(data.Dataset):
                       train=True,flattop_only=True,
                       Twarn=300,
                       test=0,test_indices=None,
-                      label_balance='const',normalize=True):
+                      label_balance='const',normalize=True,data_step=1):
         """Initialize
         root: Directory root. Must have 'disrupt/' and 'clear/' as subdirectories
         clear_file, disrupt_file: File paths for disrupt/clear ECEi datasets.
@@ -34,6 +34,7 @@ class EceiDataset(data.Dataset):
         test: training set size (# shots), for testing of overfitting purposes
         test_indices: List of specific global indices (len(test_indices) must match test)
         label_balance: For imbalanced label sets, uses weight to balance in binary cross entropy  (default True)
+        data_step: step to take in indexing the data
         """
         self.root = root
         self.train = train #training set or test set TODO: Do I need this?
@@ -42,6 +43,7 @@ class EceiDataset(data.Dataset):
         self.test = test
         self.label_balance = label_balance
         self.normalize = normalize
+        self.data_step = data_step
 
         data_disrupt = np.loadtxt(disrupt_file,skiprows=1)
         data_clear = np.loadtxt(clear_file,skiprows=1)
@@ -172,7 +174,7 @@ class EceiDataset(data.Dataset):
         if np.all(self.offsets[...,index]==0):
             self.offsets[...,index] = f['offsets'][...]
         #read data, remove offset
-        X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]] - self.offsets[...,index][...,np.newaxis]
+        X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]:self.data_step] - self.offsets[...,index][...,np.newaxis]
         if self.normalize:
             X = (X - self.normalize_mean[...,np.newaxis])/self.normalize_std[...,np.newaxis]
         f.close()

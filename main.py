@@ -88,6 +88,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'multi node data parallel training')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
+parser.add_argument('--data-step', default=1, type=int,
+                    help='step to take in indexing the data')
 parser.add_argument('--test', default=0, type=int, metavar='N',
                     help='runs on single example, to verify model can overfit (default: 0)')
 parser.add_argument('--test-indices', default=None, nargs='*',type=int,
@@ -210,7 +212,8 @@ def main_worker(gpu,ngpus_per_node,args):
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
                           test=args.test,test_indices=args.test_indices,
                           label_balance=args.label_balance,
-                          normalize=(not args.no_normalize))
+                          normalize=(not args.no_normalize),
+                          data_step=args.data_step)
     #create the indices for train/val/test split
     dataset.train_val_test_split()
     #create data loaders
