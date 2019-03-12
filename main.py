@@ -86,6 +86,8 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'N processes per node, which has N GPUs. This is the '
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
+parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                    help='path to latest checkpoint (default: none)')
 parser.add_argument('--test', default=0, type=int, metavar='N',
                     help='runs on single example, to verify model can overfit (default: 0)')
 parser.add_argument('--test-indices', default=None, nargs='*',type=int,
@@ -226,6 +228,23 @@ def main_worker(gpu,ngpus_per_node,args):
     #TODO generalize factor?
     scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5)
 
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            checkpoint = torch.load(args.resume)
+            args.start_epoch = checkpoint['epoch']
+            best_acc = checkpoint['best_acc1']
+            if args.gpu is not None:
+                # best_acc may be from a checkpoint from a different GPU
+                best_acc = best_acc.to(args.gpu)
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            print("=> loaded checkpoint '{}' (epoch {})"
+                      .format(args.resume, checkpoint['epoch']))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.resume))
+
     steps = 0
     total_loss = 0
     best_acc = 0
@@ -235,16 +254,23 @@ def main_worker(gpu,ngpus_per_node,args):
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
+            args.iteration = iteration
 
             #learning rate scheduler
             if iteration < args.iterations_warmup:
                 scheduler_warmup.step(iteration)
             else:
-                #scheduler_plateau.step(train_loss)
                 #TODO change to be general outside of test
-                if iteration % args.test == 0:
-                    scheduler_plateau.step(total_loss)
-                    total_loss = 0
+                if args.test==0:
+                    if iteration % args.iterations_valid == 0:
+                        #TODO Decide if use validation loss instead
+                        scheduler_plateau.step(total_loss)
+                        print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                    iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
+                        total_loss = 0
+                else:
+                    if iteration % args.test == 0:
+                        scheduler_plateau.step(total_loss)
 
             #train single iteration
             train_loss = train_seq(data,target,weight,model,optimizer,args)
@@ -279,8 +305,6 @@ def main_worker(gpu,ngpus_per_node,args):
                             epoch, (batch_idx*args.world_size+args.rank), len(train_loader.dataset),
                             100. * (batch_idx*args.world_size+args.rank)  / len(train_loader.dataset), global_index, train_loader.dataset.dataset.disrupted[global_index],train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
         
-        print('Train Epoch: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                            epoch, total_loss, steps,(time.time()-args.tstart),lr_epoch))
     if (args.test>0):
         plt.figure(figsize=[6.40,7.40])
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
@@ -292,21 +316,29 @@ def main_worker(gpu,ngpus_per_node,args):
                 train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
                                           optimizer=None,weight=weight,
                                           train=False,clip=args.clip)
-                plt.clf()
-                plt.subplot(311)
-                plt.plot(data[0,0,:].detach().cpu().numpy())
-                plt.title('Loss: %0.4e' % loss)
-                plt.subplot(312)
-                plt.plot(output[...,args.nrecept-1:].detach().cpu().numpy()[0,:])
-                plt.plot(target[...,args.nrecept-1:].detach().cpu().numpy()[0,:],'--')
-                plt.subplot(313)
-                plt.plot(weight[...,args.nrecept-1:].detach().cpu().numpy()[0,:])
-                plt.tight_layout()
-                plt.subplots_adjust(hspace=0.05)
-                plt.savefig('test_output_'+str(int(os.environ['SLURM_JOB_ID']))+'_ind_'+str(global_index.item())+'.png')
+
+                plot_output(data,output,target,weight,args,
+                           filename='test_output_'+str(int(os.environ['SLURM_JOB_ID']))+'_ind_'+str(global_index.item())+'.png',
+                           title='Loss: %0.4e' % loss)
 
     if is_writer: writer.close()
     time.sleep(180) #allow all processes to finish
+
+
+def plot_output(data,output,target,weight,args,filename='output.png',title=''):
+    plt.clf()
+    plt.subplot(311)
+    plt.plot(data[0,0,:].detach().cpu().numpy())
+    plt.title(title)
+    plt.subplot(312)
+    plt.plot(output[...,args.nrecept-1:].detach().cpu().numpy()[0,:])
+    plt.plot(target[...,args.nrecept-1:].detach().cpu().numpy()[0,:],'--')
+    plt.subplot(313)
+    plt.plot(weight[...,args.nrecept-1:].detach().cpu().numpy()[0,:])
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0.05)
+    plt.savefig(filename)
+
 
 def train_seq(data, target, weight, model, optimizer, args):
     '''Takes a batch sequence and trains, splitting if needed'''
@@ -368,22 +400,22 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
 #for the validation and test set
 def evaluate(val_loader,model,args):
     model.eval()
-    loss = 0
+    total_loss = 0
     correct = 0
-    first = True
+    #first = True
     with torch.no_grad(): #turns off backprop, saves computation
-        for data, target,_,weight in val_loader:
+        for batch_idx,(data, target,global_index,weight) in enumerate(val_loader):
             data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
             data = data.view(args.batch_size, args.input_channels, -1)
             output = model(data)
             #loss += F.binary_cross_entropy(output, target, size_average=False).item()
-            loss += F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:],reduction='sum').item()/(output.shape[-1]-args.nrecept+1)
+            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:],reduction='sum').item()/(output.shape[-1]-args.nrecept+1)
+            total_loss += loss
             if ((val_loader.dataset.dataset.disrupted[global_index]==1)):
-                plt.clf()
-                plt.plot(output[...,Nrecept-1:].detach().cpu().numpy()[0,:])
-                plt.plot(target[...,Nrecept-1:].detach().cpu().numpy()[0,:])
-                plt.savefig('output_rank_'+str(args.rank)+'_ind_'+str(int(global_index))+'.png')
-                first = False
+                plot_output(data,output,target,weight,args,
+                        filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(global_index))+'.png',
+                        title='Loss: %0.4e' % float(loss))
+                #first = False
             #TODO: Enter validation loss here, modify from this simple
             #pred = output.data.max(1, keepdim=True)[1]
             #correct += pred.eq(target.data.view_as(pred)).cpu().sum()
@@ -393,17 +425,17 @@ def evaluate(val_loader,model,args):
                         100. * (batch_idx*args.world_size+args.rank)  / len(val_loader.dataset), global_index, val_loader.dataset.dataset.disrupted[global_index], loss, (time.time()-args.tstart),psutil.virtual_memory().used/1024**3.))
 
 
-        loss /= len(val_loader.dataset)
+        total_loss /= len(val_loader.dataset)
         print('\nValidation set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
             loss, correct, len(val_loader.dataset),
             100. * correct / len(val_loader.dataset)))
-        return loss
+        return total_loss
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.'+os.environ['SLURM_JOB_ID']+'.pth.tar')
+        shutil.copyfile(filename, 'model_best.'+str(int(os.environ['SLURM_JOB_ID']))+'.pth.tar')
 
 
 def create_model(args):
