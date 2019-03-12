@@ -237,10 +237,10 @@ def main_worker(gpu,ngpus_per_node,args):
             print("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc1']
-            if args.gpu is not None:
-                # best_acc may be from a checkpoint from a different GPU
-                best_acc = best_acc.to(args.gpu)
+            best_acc = checkpoint['best_acc']
+            #if args.gpu is not None:
+            #    # best_acc may be from a checkpoint from a different GPU
+            #    best_acc = best_acc.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
