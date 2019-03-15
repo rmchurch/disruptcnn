@@ -198,8 +198,8 @@ class EceiDataset(data.Dataset):
         weight = self.neg_weight*np.ones((X.shape[-1]),dtype=X.dtype)
         if self.disrupted[index]:
             #TODO: class weighting beyond constant
-            target[np.ceil((self.disrupt_idx[index]-self.start_idx[index]+1)/self.data_step):] = 1
-            weight[np.ceil((self.disrupt_idx[index]-self.start_idx[index]+1)/self.data_step):] = self.pos_weight
+            target[int((self.disrupt_idx[index]-self.start_idx[index]+1)/self.data_step):] = 1
+            weight[int((self.disrupt_idx[index]-self.start_idx[index]+1)/self.data_step):] = self.pos_weight
 
         return X,target,index.item(),weight
 

@@ -429,8 +429,8 @@ def evaluate(val_loader,model,args):
 
 
         total_loss /= len(val_loader.dataset)
-        print('\nValidation set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-            loss, correct, len(val_loader.dataset),
+        print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+            total_loss, correct, len(val_loader.dataset),
             100. * correct / len(val_loader.dataset)))
         return total_loss
 
