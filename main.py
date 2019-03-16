@@ -286,14 +286,15 @@ def main_worker(gpu,ngpus_per_node,args):
                 valid_loss = evaluate(val_loader, model, args)
                 #TODO Replace when accuracy written
                 acc = valid_loss
-                 
-                writer.add_scalar('valid_loss',valid_loss,iteration)
+                
+                if is_writer:
+                    writer.add_scalar('valid_loss',valid_loss,iteration)
                 # remember best acc and save checkpoint
                 is_best = acc > best_acc
                 best_acc = max(acc, best_acc)
                  
-                if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                        and args.rank % ngpus_per_node == 0):
+                if (not args.multiprocessing_distributed and args.rank==0) or \
+                   (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     save_checkpoint({
                         'epoch': epoch + 1,
                         'state_dict': model.state_dict(),
@@ -427,11 +428,14 @@ def evaluate(val_loader,model,args):
                          (batch_idx*args.world_size+args.rank), len(val_loader.dataset),
                         100. * (batch_idx*args.world_size+args.rank)  / len(val_loader.dataset), global_index, val_loader.dataset.dataset.disrupted[global_index], loss, (time.time()-args.tstart),psutil.virtual_memory().used/1024**3.))
 
-
         total_loss /= len(val_loader.dataset)
-        print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-            total_loss, correct, len(val_loader.dataset),
-            100. * correct / len(val_loader.dataset)))
+        print('Total_loss: %0.4e, rank: %d' % (total_loss,args.rank))
+        if args.distributed:
+            dist.all_reduce(torch.tensor(total_loss), op=dist.ReduceOp.SUM)
+        if args.rank==0:
+            print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+                    total_loss, correct, len(val_loader.dataset),
+                    100. * correct / len(val_loader.dataset)))
         return total_loss
 
 
@@ -465,6 +469,21 @@ def calc_seq_length(kernel_size,dilation_sizes,nlevel):
     if np.isscalar(dilation_sizes): dilation_sizes = dilation_sizes**np.arange(nlevel)
     return 1 + 2*(kernel_size-1)*np.sum(dilation_sizes)
 
+
+class Metric(object):
+    def __init__(self, name):
+        self.name = name
+        self.sum = torch.tensor(0.)
+        self.n = torch.tensor(0.)
+        
+    def update(self, val):
+        dist.all_reduce(val, op=dist.reduce_op.SUM)
+        self.sum += val
+        self.n += 1
+        
+    @property
+    def avg(self):
+        return self.sum / self.n
 
 if __name__ == "__main__":
     tstart = time.time()
