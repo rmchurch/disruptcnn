@@ -274,6 +274,9 @@ def main_worker(gpu,ngpus_per_node,args):
                 else:
                     if iteration % args.test == 0:
                         scheduler_plateau.step(total_loss)
+                        print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                    iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
+                        total_loss = 0
 
             #train single iteration
             train_loss = train_seq(data,target,weight,model,optimizer,args)
@@ -431,7 +434,8 @@ def evaluate(val_loader,model,args):
         total_loss /= len(val_loader.dataset)
         print('Total_loss: %0.4e, rank: %d' % (total_loss,args.rank))
         if args.distributed:
-            dist.all_reduce(torch.tensor(total_loss), op=dist.ReduceOp.SUM)
+            total_loss = torch.tensor(total_loss)
+            dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
         if args.rank==0:
             print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%)\n'.format(
                     total_loss, correct, len(val_loader.dataset),
