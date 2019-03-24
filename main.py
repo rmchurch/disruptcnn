@@ -364,7 +364,7 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
     '''
     if weight is None: weight = torch.ones(target.shape).cuda()
     N = data.shape[-1] #length of entire sequence
-    num_seq_frac = (N - Nsub)/float(Nsub - Nrecept + 1)+1
+    num_seq_frac = (N - Nsub)/float(Nsub - Nrecept + 1)+1 #this assumes N>=Nrecept
     num_seq = np.ceil(num_seq_frac).astype(int)
     total_losses = 0
     for m in range(num_seq):

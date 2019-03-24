@@ -14,7 +14,8 @@ class EceiDataset(data.Dataset):
                       train=True,flattop_only=True,
                       Twarn=300,
                       test=0,test_indices=None,
-                      label_balance='const',normalize=True,data_step=1):
+                      label_balance='const',normalize=True,data_step=1,
+                      nsub=None,nrecept=None):
         """Initialize
         root: Directory root. Must have 'disrupt/' and 'clear/' as subdirectories
         clear_file, disrupt_file: File paths for disrupt/clear ECEi datasets.
@@ -35,6 +36,8 @@ class EceiDataset(data.Dataset):
         test_indices: List of specific global indices (len(test_indices) must match test)
         label_balance: For imbalanced label sets, uses weight to balance in binary cross entropy  (default True)
         data_step: step to take in indexing the data
+        nsub: Subsequence length to use
+        nrecept: Receptive field length of model
         """
         self.root = root
         self.train = train #training set or test set TODO: Do I need this?
@@ -44,6 +47,8 @@ class EceiDataset(data.Dataset):
         self.label_balance = label_balance
         self.normalize = normalize
         self.data_step = data_step
+        self.nsub = nsub
+        self.nrecept = nrecept
 
         data_disrupt = np.loadtxt(disrupt_file,skiprows=1)
         data_clear = np.loadtxt(clear_file,skiprows=1)
@@ -65,6 +70,7 @@ class EceiDataset(data.Dataset):
         self.disrupt_idx[tdisrupt<0] = -1000 #TODO: should this be something else? nan isnt possible with int
         self.disrupted = self.disrupt_idx>0 #True if disrupted, False if not
         
+        self.zero_idx = np.ceil((0.-tstarts)/dt).astype(int)
         if flattop_only:
             self.start_idx = np.ceil((tflatstarts-tstarts)/dt).astype(int)
             tend = np.maximum(tdisrupt,tflatstops)
@@ -100,6 +106,10 @@ class EceiDataset(data.Dataset):
         #create label weights
         self.calc_label_weights()
 
+        #split shots into subsequences (allows uniform subsequence length, easier batching)
+        self.shots2seqs()
+
+        #testing setup
         if self.test > 0:
             labels = self.disrupted
             if self.test==1:
@@ -118,6 +128,35 @@ class EceiDataset(data.Dataset):
                 self.test_data = []
                 for ind in self.test_indices:
                     self.test_data += [self.read_data(ind)]
+
+    def shots2seqs(self):
+        self.shot_idxi = []; self.start_idxi = []; self.stop_idxi = []; self.disrupt_idxi = []
+        for s in range(len(self.shot)):
+            N = int((self.stop_idx[s] - self.start_idx[s] + 1)/self.data_step) #length of entire sequence
+            num_seq_frac = (N - self.nsub)/float(self.nsub - self.nrecept + 1)+1
+            num_seq = np.ceil(num_seq_frac).astype(int)
+            #determine if there is enough additional sequence points to cover the 
+            #proposed number of sequences
+            Nseq = self.nsub + (num_seq - 1)*(self.nsub - self.nrecept + 1)
+            if ((self.start_idx[s]>self.zero_idx[s]) & 
+               ((self.start_idx[s] - self.zero_idx[s] + 1) > (Nseq - N)*self.data_step)):
+                self.start_idx[s] -= (Nseq - N)*self.data_step
+            else:
+                num_seq -= 1
+                Nseq = self.nsub + (num_seq - 1)*(self.nsub - self.nrecept + 1)
+                self.start_idx[s] += (N - Nseq)*self.data_step
+
+            for m in range(num_seq):
+                self.shots_idxi += [s]
+                self.start_idxi += [(m*self.nsub - m*self.nrecept + m)*self.data_step]
+                self.stop_idxi += [((m+1)*self.nsub - m*self.nrecept + m)*self.data_step]
+                if ((self.start_idxi[-1]<=self.disrupt_idx[s]) & (self.stop_idxi[-1]>=self.disrupt_idx[s])):
+                    self.disrupt_idxi += [self.disrupt_idx[s]]
+                else:
+                    self.disrupt_idxi += [-1000]
+        
+        self.disruptedi = self.disrupt_idxi>0
+        self.length = len(self.shot_idxi)
 
     def calc_label_weights(self,inds=None):
         """Calculated weights to use in the criterion"""
@@ -144,14 +183,14 @@ class EceiDataset(data.Dataset):
         assert(np.isclose(np.sum(sizes),1.0))
 
         #TODO: make labels based on each point, NOT just whether has disruptive points?
-        labels = self.disrupted
+        labels = self.disruptedi
 
         if self.test > 0:
             self.train_inds = self.test_indices
             self.val_inds = []
             self.test_inds = []
         else:
-            self.train_inds,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(self.shot.size),labels,
+            self.train_inds,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(len(self.shot_idxi)),labels,
                                                                                         stratify=labels,
                                                                                         test_size=np.sum(sizes[1:]))
             self.val_inds, self.test_inds, _, _ = train_test_split(valtest_inds,valtest_labels,
@@ -168,13 +207,14 @@ class EceiDataset(data.Dataset):
         return self.root+shot_type+'/'+str(self.shot[index])+'.h5'
 
     def read_data(self,index):
-        filename = self.create_filename(index)
+        shot_index = self.shot_idxi[index]
+        filename = self.create_filename(shot_index)
         f = h5py.File(filename,'r')
         #check if weve read in offsets yet
-        if np.all(self.offsets[...,index]==0):
-            self.offsets[...,index] = f['offsets'][...]
+        if np.all(self.offsets[...,shot_index]==0):
+            self.offsets[...,shot_index] = f['offsets'][...]
         #read data, remove offset
-        X = f['LFS'][...,self.start_idx[index]:self.stop_idx[index]:self.data_step] - self.offsets[...,index][...,np.newaxis]
+        X = f['LFS'][...,self.start_idxi[index]:self.stop_idxi[index]:self.data_step] - self.offsets[...,shot_index][...,np.newaxis]
         if self.normalize:
             X = (X - self.normalize_mean[...,np.newaxis])/self.normalize_std[...,np.newaxis]
         f.close()
@@ -196,10 +236,10 @@ class EceiDataset(data.Dataset):
         #label for clear(=0) or disrupted(=1, or weighted)
         target = np.zeros((X.shape[-1]),dtype=X.dtype)
         weight = self.neg_weight*np.ones((X.shape[-1]),dtype=X.dtype)
-        if self.disrupted[index]:
+        if self.disruptedi[index]:
             #TODO: class weighting beyond constant
-            target[int((self.disrupt_idx[index]-self.start_idx[index]+1)/self.data_step):] = 1
-            weight[int((self.disrupt_idx[index]-self.start_idx[index]+1)/self.data_step):] = self.pos_weight
+            target[int((self.disrupt_idxi[index]-self.start_idxi[index]+1)/self.data_step):] = 1
+            weight[int((self.disrupt_idxi[index]-self.start_idxi[index]+1)/self.data_step):] = self.pos_weight
 
         return X,target,index.item(),weight
 
