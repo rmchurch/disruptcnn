@@ -103,11 +103,12 @@ class EceiDataset(data.Dataset):
             self.normalize_mean = f['mean_all']
             self.normalize_std = f['std_all']
 
-        #create label weights
-        self.calc_label_weights()
-
         #split shots into subsequences (allows uniform subsequence length, easier batching)
         self.shots2seqs()
+
+        #create label weights
+        #TODO: Is this needed here? Called in train_val_split
+        #self.calc_label_weights()
 
         #testing setup
         if self.test > 0:
@@ -135,6 +136,7 @@ class EceiDataset(data.Dataset):
             N = int((self.stop_idx[s] - self.start_idx[s] + 1)/self.data_step) #length of entire sequence
             num_seq_frac = (N - self.nsub)/float(self.nsub - self.nrecept + 1)+1
             num_seq = np.ceil(num_seq_frac).astype(int)
+            if num_seq<1: num_seq = 1 #try to force at least 1 subsequence from shot
             #determine if there is enough additional sequence points to cover the 
             #proposed number of sequences
             Nseq = self.nsub + (num_seq - 1)*(self.nsub - self.nrecept + 1)
@@ -145,16 +147,18 @@ class EceiDataset(data.Dataset):
                 num_seq -= 1
                 Nseq = self.nsub + (num_seq - 1)*(self.nsub - self.nrecept + 1)
                 self.start_idx[s] += (N - Nseq)*self.data_step
-
+            
             for m in range(num_seq):
-                self.shots_idxi += [s]
-                self.start_idxi += [(m*self.nsub - m*self.nrecept + m)*self.data_step]
-                self.stop_idxi += [((m+1)*self.nsub - m*self.nrecept + m)*self.data_step]
+                self.shot_idxi += [s]
+                self.start_idxi += [self.start_idx[s] + (m*self.nsub - m*self.nrecept + m)*self.data_step]
+                self.stop_idxi  += [self.start_idx[s] + ((m+1)*self.nsub - m*self.nrecept + m)*self.data_step]
                 if ((self.start_idxi[-1]<=self.disrupt_idx[s]) & (self.stop_idxi[-1]>=self.disrupt_idx[s])):
                     self.disrupt_idxi += [self.disrupt_idx[s]]
                 else:
                     self.disrupt_idxi += [-1000]
         
+        self.shot_idxi = np.array(self.shot_idxi); self.start_idxi = np.array(self.start_idxi); 
+        self.stop_idxi = np.array(self.stop_idxi); self.disrupt_idxi = np.array(self.disrupt_idxi)
         self.disruptedi = self.disrupt_idxi>0
         self.length = len(self.shot_idxi)
 
@@ -164,9 +168,9 @@ class EceiDataset(data.Dataset):
         #TODO implement increasing weight towards final disruption
         if inds is None: inds = np.arange(len(self.shot))
         if 'const' in self.label_balance:
-            N = np.sum(self.stop_idx[inds] - self.start_idx[inds])
-            disinds = inds[self.disrupted[inds]]
-            Ndisrupt = np.sum(self.stop_idx[disinds] - self.disrupt_idx[disinds])
+            N = np.sum(self.stop_idxi[inds] - self.start_idxi[inds])
+            disinds = inds[self.disruptedi[inds]]
+            Ndisrupt = np.sum(self.stop_idxi[disinds] - self.disrupt_idxi[disinds])
             Nnondisrupt = N - Ndisrupt
             self.pos_weight = 0.5*N/Ndisrupt
             self.neg_weight = 0.5*N/Nnondisrupt
@@ -183,19 +187,22 @@ class EceiDataset(data.Dataset):
         assert(np.isclose(np.sum(sizes),1.0))
 
         #TODO: make labels based on each point, NOT just whether has disruptive points?
-        labels = self.disruptedi
+        labels = self.disrupted
 
         if self.test > 0:
             self.train_inds = self.test_indices
             self.val_inds = []
             self.test_inds = []
         else:
-            self.train_inds,valtest_inds,train_labels,valtest_labels = train_test_split(np.arange(len(self.shot_idxi)),labels,
+            train_shot_inds,valtest_shot_inds,train_labels,valtest_labels = train_test_split(np.arange(len(self.shot)),labels,
                                                                                         stratify=labels,
                                                                                         test_size=np.sum(sizes[1:]))
-            self.val_inds, self.test_inds, _, _ = train_test_split(valtest_inds,valtest_labels,
+            val_shot_inds, test_shot_inds, _, _ = train_test_split(valtest_shot_inds,valtest_labels,
                                                                    stratify=valtest_labels,
                                                                    test_size=sizes[2]/np.sum(sizes[1:]))
+            self.train_inds = np.where(np.in1d(self.shot_idxi,train_shot_inds))[0]
+            self.val_inds = np.where(np.in1d(self.shot_idxi,val_shot_inds))[0]
+            self.test_inds = np.where(np.in1d(self.shot_idxi,test_shot_inds))[0]
         self.calc_label_weights(inds=self.train_inds)
 
     def create_filename(self,index):

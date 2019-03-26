@@ -118,7 +118,7 @@ disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
 def main():
     args = parser.parse_args()
 
-    assert (args.batch_size==1), "Currently need batch_size=1, due to variable length sequences"
+    #assert (args.batch_size==1), "Currently need batch_size=1, due to variable length sequences"
     assert torch.cuda.is_available(), "GPU is currently required"
 
     args.world_size = int(os.environ['SLURM_NTASKS'])
@@ -213,7 +213,8 @@ def main_worker(gpu,ngpus_per_node,args):
                           test=args.test,test_indices=args.test_indices,
                           label_balance=args.label_balance,
                           normalize=(not args.no_normalize),
-                          data_step=args.data_step)
+                          data_step=args.data_step,
+                          nsub=args.nsub,nrecept=args.nrecept)
     #create the indices for train/val/test split
     dataset.train_val_test_split()
     #create data loaders
@@ -305,9 +306,9 @@ def main_worker(gpu,ngpus_per_node,args):
             
             if batch_idx % args.log_interval == 0:
                 lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIndex: %d\tDisrupted: %d\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
-                            epoch, (batch_idx*args.world_size+args.rank), len(train_loader.dataset),
-                            100. * (batch_idx*args.world_size+args.rank)  / len(train_loader.dataset), global_index, train_loader.dataset.dataset.disrupted[global_index],train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                print('Train Epoch: %d [%d/%d (%0.2f%%)]\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
+                            epoch, batch_idx, len(train_loader),
+                            100. * (batch_idx / len(train_loader),train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
         
     if (args.test>0):
         plt.figure(figsize=[6.40,7.40])
@@ -351,11 +352,22 @@ def train_seq(data, target, weight, model, optimizer, args):
                                 target.cuda(non_blocking=True), \
                                 weight.cuda(non_blocking=True)
     data = data.view(args.batch_size, args.input_channels, -1)
+    
+    #No data splitting
+    optimizer.zero_grad()
+    ys = model(data)
+    #do mean of loss by hand to handle unequal sequence lengths
+    loss = F.binary_cross_entropy(ys[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
+    loss.backward()
+    if args.clip is not None:
+        torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+    optimizer.step()
+
     #split data into subsequences to process
-    train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
-                              optimizer=optimizer,weight=weight,
-                              train=True,clip=args.clip,accumulate=args.accumulate)
-    return train_loss
+    #train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
+    #                          optimizer=optimizer,weight=weight,
+    #                          train=True,clip=args.clip,accumulate=args.accumulate)
+    return loss
 
 
 def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
