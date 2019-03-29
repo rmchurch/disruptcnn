@@ -6,6 +6,7 @@ import h5py
 from sklearn.model_selection import train_test_split
 import os
 #from torch.utils.data import SubsetRandomSampler
+from disruptcnn.sampler import DistributedStratifiedSampler
 
 class EceiDataset(data.Dataset):
     """ECEi dataset"""
@@ -73,7 +74,8 @@ class EceiDataset(data.Dataset):
         self.zero_idx = np.ceil((0.-tstarts)/dt).astype(int)
         if flattop_only:
             self.start_idx = np.ceil((tflatstarts-tstarts)/dt).astype(int)
-            tend = np.maximum(tdisrupt,tflatstops)
+            tend = np.maximum(tdisrupt,np.minimum(tstops,tflatstops)) #minimum ensures tflatstops<tstops
+            #tend = np.maximum(tdisrupt,tflatstops)
         else:
             self.start_idx = np.ceil((0.-tstarts)/dt).astype(int)
             tend = np.maximum(tdisrupt,tstops)
@@ -108,7 +110,7 @@ class EceiDataset(data.Dataset):
 
         #create label weights
         #TODO: Is this needed here? Called in train_val_split
-        #self.calc_label_weights()
+        self.calc_label_weights()
 
         #testing setup
         if self.test > 0:
@@ -221,7 +223,7 @@ class EceiDataset(data.Dataset):
         if np.all(self.offsets[...,shot_index]==0):
             self.offsets[...,shot_index] = f['offsets'][...]
         #read data, remove offset
-        X = f['LFS'][...,self.start_idxi[index]:self.stop_idxi[index]:self.data_step] - self.offsets[...,shot_index][...,np.newaxis]
+        X = f['LFS'][...,self.start_idxi[index]:self.stop_idxi[index]][...,::self.data_step] - self.offsets[...,shot_index][...,np.newaxis]
         if self.normalize:
             X = (X - self.normalize_mean[...,np.newaxis])/self.normalize_std[...,np.newaxis]
         f.close()
@@ -268,8 +270,10 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
 
     #shuffle dataset each epoch for training data using DistrbutedSampler. Also splits among workers. 
     if distributed:
-        train_sampler = data.distributed.DistributedSampler(train_dataset,num_replicas=num_replicas,rank=rank)
-        val_sampler = data.distributed.DistributedSampler(val_dataset,num_replicas=num_replicas,rank=rank)
+        #train_sampler = data.distributed.DistributedSampler(train_dataset,num_replicas=num_replicas,rank=rank)
+        #val_sampler = data.distributed.DistributedSampler(val_dataset,num_replicas=num_replicas,rank=rank)
+        train_sampler = DistributedStratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds])
+        val_sampler = DistributedStratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds])
     else:
         train_sampler = None
         val_sampler = None
@@ -277,16 +281,19 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
     #create data loaders for train/val/test datasets
     train_loader = data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=(train_sampler is None),
-        num_workers=num_workers, pin_memory=True, sampler=train_sampler)
+        num_workers=num_workers, pin_memory=True, sampler=train_sampler,
+        drop_last=True)
 
     val_loader = data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True, sampler=val_sampler)
+        num_workers=num_workers, pin_memory=True, sampler=val_sampler,
+        drop_last=True)
         #val_dataset, batch_size=batch_size, shuffle=False,
         #num_workers=num_workers, pin_memory=True)
 
     test_loader = data.DataLoader(
         test_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True)
+        num_workers=num_workers, pin_memory=True,
+        drop_last=True)
     
     return train_loader,val_loader,test_loader
