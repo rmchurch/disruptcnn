@@ -249,6 +249,11 @@ def main_worker(gpu,ngpus_per_node,args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
+    #this autotunes algo on GPU. If variable input (like before with single shot), would
+    #be worse performance
+    cudnn.benchmark = True
+
+
     steps = 0
     total_loss = 0
     best_acc = 0
@@ -306,9 +311,9 @@ def main_worker(gpu,ngpus_per_node,args):
             
             if batch_idx % args.log_interval == 0:
                 lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                print('Train Epoch: %d [%d/%d (%0.2f%%)]\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
+                print('Train Epoch: %d [%d/%d (%0.2f%%)]\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
                             epoch, batch_idx, len(train_loader),
-                            100. * (batch_idx / len(train_loader),train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                            100. * (batch_idx / len(train_loader)),np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
         
     if (args.test>0):
         plt.figure(figsize=[6.40,7.40])
@@ -425,22 +430,23 @@ def evaluate(val_loader,model,args):
             data = data.view(args.batch_size, args.input_channels, -1)
             output = model(data)
             #loss += F.binary_cross_entropy(output, target, size_average=False).item()
-            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:],reduction='sum').item()/(output.shape[-1]-args.nrecept+1)
+            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:]).item()
             total_loss += loss
-            if ((val_loader.dataset.dataset.disrupted[global_index]==1)):
-                plot_output(data,output,target,weight,args,
-                        filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(global_index))+'.png',
-                        title='Loss: %0.4e' % float(loss))
-                #first = False
+            for gi in global_index:
+                if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
+                    plot_output(data,output,target,weight,args,
+                            filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
+                            title='Loss: %0.4e' % float(loss))
+                    #first = False
             #TODO: Enter validation loss here, modify from this simple
             #pred = output.data.max(1, keepdim=True)[1]
             #correct += pred.eq(target.data.view_as(pred)).cpu().sum()
             correct = -1
-            print('Validation  [%d/%d (%0.2f%%)]\tIndex: %d\tDisrupted: %d\tLoss: %0.6e\tTime: %0.2f\tMem: %0.1f' % (
-                         (batch_idx*args.world_size+args.rank), len(val_loader.dataset),
-                        100. * (batch_idx*args.world_size+args.rank)  / len(val_loader.dataset), global_index, val_loader.dataset.dataset.disrupted[global_index], loss, (time.time()-args.tstart),psutil.virtual_memory().used/1024**3.))
+            print('Validation  [%d/%d (%0.2f%%)]\tDisrupted: %0.4f\tLoss: %0.6e\tTime: %0.2f\tMem: %0.1f' % (
+                         batch_idx, len(val_loader),
+                        100. * (batch_idx)  / len(val_loader), np.sum(val_loader.dataset.dataset.disruptedi[global_index])/global_index.size(),loss, (time.time()-args.tstart),psutil.virtual_memory().used/1024**3.))
 
-        total_loss /= len(val_loader.dataset)
+        total_loss /= len(val_loader)
         print('Total_loss: %0.4e, rank: %d' % (total_loss,args.rank))
         if args.distributed:
             dist.all_reduce(torch.tensor(total_loss), op=dist.ReduceOp.SUM)
