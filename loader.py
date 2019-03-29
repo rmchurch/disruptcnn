@@ -6,7 +6,7 @@ import h5py
 from sklearn.model_selection import train_test_split
 import os
 #from torch.utils.data import SubsetRandomSampler
-from disruptcnn.sampler import DistributedStratifiedSampler
+from disruptcnn.sampler import StratifiedSampler
 
 class EceiDataset(data.Dataset):
     """ECEi dataset"""
@@ -269,18 +269,12 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
     test_dataset = data.Subset(dataset,dataset.test_inds)
 
     #shuffle dataset each epoch for training data using DistrbutedSampler. Also splits among workers. 
-    if distributed:
-        #train_sampler = data.distributed.DistributedSampler(train_dataset,num_replicas=num_replicas,rank=rank)
-        #val_sampler = data.distributed.DistributedSampler(val_dataset,num_replicas=num_replicas,rank=rank)
-        train_sampler = DistributedStratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds])
-        val_sampler = DistributedStratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds])
-    else:
-        train_sampler = None
-        val_sampler = None
+    train_sampler = StratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds],distributed=distributed)
+    val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds],distributed=distributed)
     
     #create data loaders for train/val/test datasets
     train_loader = data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=(train_sampler is None),
+        train_dataset, batch_size=batch_size,
         num_workers=num_workers, pin_memory=True, sampler=train_sampler,
         drop_last=True)
 
