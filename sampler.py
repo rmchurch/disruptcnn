@@ -28,6 +28,7 @@ class StratifiedSampler(DistributedSampler):
         if self.distributed:
             DistributedSampler.__init__(self,dataset, num_replicas=num_replicas, rank=rank)
         else:
+            #TODO need to create ither variables defined in distriburedsampler when stratify off
             self.num_replicas = 1
             self.rank = 0
             self.epoch = 0
@@ -38,6 +39,7 @@ class StratifiedSampler(DistributedSampler):
             self.Nneg = int(self.stratify.size - sum(self.stratify))
             self.pos_num_samples = int(math.ceil(self.Npos * 1.0 / self.num_replicas))
             self.neg_num_samples = int(math.ceil(self.Nneg * 1.0 / self.num_replicas))
+            self.num_samples = self.pos_num_samples + self.neg_num_samples
             self.pos_total_size = self.pos_num_samples * self.num_replicas
             self.neg_total_size = self.neg_num_samples * self.num_replicas
 
