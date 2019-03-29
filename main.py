@@ -406,7 +406,7 @@ def train_seq(data, target, weight, model, optimizer, args):
     #train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
     #                          optimizer=optimizer,weight=weight,
     #                          train=True,clip=args.clip,accumulate=args.accumulate)
-    return loss
+    return loss.item()
 
 
 def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
