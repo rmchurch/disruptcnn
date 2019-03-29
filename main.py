@@ -96,6 +96,8 @@ parser.add_argument('--test-indices', default=None, nargs='*',type=int,
                     help='list of global indices to use (default: None)')
 parser.add_argument('--no-normalize', action='store_true',
                     help='dont normalize the data (default: False)')
+parser.add_argument('--lr-finder', action='store_true',
+                    help='Learning rate finder test (default: False)')
 
 
 
@@ -224,13 +226,24 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #TODO generalize momentum?
     #TODO implement general optimizer
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
-    #gradual linear increasing learning rate for warmup
-    lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*iteration+1./args.multiplier_warmup
-    scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
-    #decaying learning rate scheduler for after warmup
-    #TODO generalize factor?
-    scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5)
+    if not args.lr_finder:
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
+        #gradual linear increasing learning rate for warmup
+        lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*iteration+1./args.multiplier_warmup
+        scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
+        #decaying learning rate scheduler for after warmup
+        #TODO generalize factor?
+        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5)
+    else:
+        lr_history = {"lr": [], "loss": []}
+        niter = 100
+        args.epochs = 1 #niter
+        lr_end = 10.0
+        args.lr = 1e-5 #start lr
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
+        lambda1=lambda iteration: (lr_end/args.lr)**(iteration/niter)
+        scheduler_lrfinder = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
+
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -266,20 +279,32 @@ def main_worker(gpu,ngpus_per_node,args):
             args.iteration = iteration
 
             #learning rate scheduler
-            if iteration < args.iterations_warmup:
-                scheduler_warmup.step(iteration)
+            if args.lr_finder:
+                if iteration % 16 == 0:
+                    scheduler_lrfinder.step()
+                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                    lr_history["lr"].append(lr_epoch)
+                    lr_history["loss"].append(total_loss)
+                    np.savez('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
+                    total_loss = 0
             else:
-                #TODO change to be general outside of test
-                if args.test==0:
-                    if iteration % args.iterations_valid == 0:
-                        #TODO Decide if use validation loss instead
-                        scheduler_plateau.step(total_loss)
-                        print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                    iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
-                        total_loss = 0
+                if iteration < args.iterations_warmup:
+                    scheduler_warmup.step(iteration)
                 else:
-                    if iteration % args.test == 0:
-                        scheduler_plateau.step(total_loss)
+                    #TODO change to be general outside of test
+                    if args.test==0:
+                        if iteration % args.iterations_valid == 0:
+                            #TODO Decide if use validation loss instead
+                            scheduler_plateau.step(total_loss)
+                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                        iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
+                            total_loss = 0
+                    else:
+                        if iteration % args.test == 0:
+                            scheduler_plateau.step(total_loss)
+                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                        iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
+                            total_loss = 0
 
             #train single iteration
             train_loss = train_seq(data,target,weight,model,optimizer,args)
@@ -330,6 +355,15 @@ def main_worker(gpu,ngpus_per_node,args):
                 plot_output(data,output,target,weight,args,
                            filename='test_output_'+str(int(os.environ['SLURM_JOB_ID']))+'_ind_'+str(global_index.item())+'.png',
                            title='Loss: %0.4e' % loss)
+
+    if args.lr_finder:
+        plt.figure()
+        plt.plot(lr_history["lr"],lr_history["loss"])
+        plt.xscale('log')
+        plt.yscale('log')
+        #plt.ylim([np.array(lr_history["loss"]).min(),lr_history["loss"][0]])
+        plt.savefig('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.png')
+        np.savez('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
 
     if is_writer: writer.close()
     time.sleep(180) #allow all processes to finish
