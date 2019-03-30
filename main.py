@@ -236,10 +236,12 @@ def main_worker(gpu,ngpus_per_node,args):
         scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5)
     else:
         lr_history = {"lr": [], "loss": []}
-        niter = 100
-        args.epochs = 1 #niter
-        lr_end = 10.0
+        ninterval = 800 #number of intervals (one interval is one learning rate value)
+        niter_per_interval = 1 #number of iterations per interval
+        niter = ninterval*niter_per_interval
+        args.epochs = int(np.ceil(niter/len(train_loader)))
         args.lr = 1e-5 #start lr
+        lr_end = 1e-2
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
         lambda1=lambda iteration: (lr_end/args.lr)**(iteration/niter)
         scheduler_lrfinder = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
@@ -280,7 +282,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #learning rate scheduler
             if args.lr_finder:
-                if iteration % 16 == 0:
+                if (iteration>0) & (iteration % niter_per_interval == 0):
                     scheduler_lrfinder.step()
                     lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                     lr_history["lr"].append(lr_epoch)
