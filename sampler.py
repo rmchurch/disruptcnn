@@ -16,14 +16,17 @@ class StratifiedSampler(DistributedSampler):
     Arguments:
         dataset: Dataset used for sampling.
         stratify (optional): Labels to balance among batches
+        undersample (optional): Fraction of neg/pos samples desired (e.g. 1.0 for equal; 0.5 for 1/3 neg, 2/3 pos, etc.)   
         distributed (optional): Stratified DistributedSampler
         num_replicas (optional): Number of processes participating in
             distributed training.
         rank (optional): Rank of the current process within num_replicas.
     """
 
-    def __init__(self, dataset, stratify=None, distributed=False, num_replicas=None, rank=None):
+    def __init__(self, dataset, stratify=None, undersample=None,
+                distributed=False, num_replicas=None, rank=None):
         self.stratify = stratify
+        self.undersample = undersample
         self.distributed = distributed
         if self.distributed:
             DistributedSampler.__init__(self,dataset, num_replicas=num_replicas, rank=rank)
@@ -38,7 +41,11 @@ class StratifiedSampler(DistributedSampler):
             self.Npos = int(sum(self.stratify))
             self.Nneg = int(self.stratify.size - sum(self.stratify))
             self.pos_num_samples = int(math.ceil(self.Npos * 1.0 / self.num_replicas))
-            self.neg_num_samples = int(math.ceil(self.Nneg * 1.0 / self.num_replicas))
+            if self.undersample is not None:
+                self.neg_num_samples = int(self.undersample*self.pos_num_samples)
+                self.first = True
+            else:
+                self.neg_num_samples = int(math.ceil(self.Nneg * 1.0 / self.num_replicas))
             self.num_samples = self.pos_num_samples + self.neg_num_samples
             self.pos_total_size = self.pos_num_samples * self.num_replicas
             self.neg_total_size = self.neg_num_samples * self.num_replicas
@@ -49,7 +56,16 @@ class StratifiedSampler(DistributedSampler):
         g.manual_seed(self.epoch)
         if self.stratify is not None:
             pos_indices = torch.randperm(self.Npos, generator=g).tolist()
-            neg_indices = torch.randperm(self.Nneg, generator=g).tolist()
+            if self.undersample is not None:
+                if self.first:
+                    neg_indices = torch.randperm(self.Nneg, generator=g)
+                    self.neg_indices_init = neg_indices[:self.neg_total_size]
+                    self.first = False
+                indices = torch.randperm(len(self.neg_indices_init), generator=g)
+                neg_indices = self.neg_indices_init[indices].tolist()
+            else:
+                neg_indices = torch.randperm(self.Nneg, generator=g).tolist()
+
 
             # add extra samples to make it evenly divisible
             pos_indices += pos_indices[:(self.pos_total_size - len(pos_indices))]

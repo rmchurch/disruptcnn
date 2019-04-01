@@ -62,6 +62,8 @@ parser.add_argument('--label-balance', type=str,default='const',
                     help="Type of label balancing. 'const' or 'none', (default: const)")
 parser.add_argument('--accumulate', action='store_true',
                     help='accumulate gradients over entire batch, i.e. shot (default: False)')
+parser.add_argument('--undersample', type=float, nargs='?',const=1.0,
+                    help='fraction of non-disruptive/disruptive subsequences (default: None if no flag, 1.0 if flag but no value)')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
@@ -222,7 +224,8 @@ def main_worker(gpu,ngpus_per_node,args):
     #create data loaders
     train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                             distributed=args.distributed,
-                                                            num_workers=args.workers)
+                                                            num_workers=args.workers,
+                                                            undersample=args.undersample)
 
     #TODO generalize momentum?
     #TODO implement general optimizer

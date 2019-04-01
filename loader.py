@@ -196,12 +196,15 @@ class EceiDataset(data.Dataset):
             self.val_inds = []
             self.test_inds = []
         else:
+            #split first according to shot classification
             train_shot_inds,valtest_shot_inds,train_labels,valtest_labels = train_test_split(np.arange(len(self.shot)),labels,
                                                                                         stratify=labels,
                                                                                         test_size=np.sum(sizes[1:]))
             val_shot_inds, test_shot_inds, _, _ = train_test_split(valtest_shot_inds,valtest_labels,
                                                                    stratify=valtest_labels,
                                                                    test_size=sizes[2]/np.sum(sizes[1:]))
+            #now get the subsequnces which belong to the shot classification split
+            # (this makes sure no bleeding of shots between train/val/test splits)
             self.train_inds = np.where(np.in1d(self.shot_idxi,train_shot_inds))[0]
             self.val_inds = np.where(np.in1d(self.shot_idxi,val_shot_inds))[0]
             self.test_inds = np.where(np.in1d(self.shot_idxi,test_shot_inds))[0]
@@ -254,11 +257,13 @@ class EceiDataset(data.Dataset):
 
 
 
-def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replicas=None,rank=None):
+def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replicas=None,rank=None,undersample=None):
     """Generate the loader objects for the train,validate, and test sets
     dataset: EceiDataset object
-    distributed: (True/False) using distributed workers
-    num_workers: Number of processes"""
+    distributed (optional): (True/False) using distributed workers
+    num_workers (optional): Number of processes
+    undersample (optional): Fraction of neg/pos samples 
+    """
 
     if not hasattr(dataset,'train_inds'):
         dataset.train_val_test_split()
@@ -269,9 +274,14 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
     test_dataset = data.Subset(dataset,dataset.test_inds)
 
     #shuffle dataset each epoch for training data using DistrbutedSampler. Also splits among workers. 
-    train_sampler = StratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds],distributed=distributed)
+    train_sampler = StratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds],distributed=distributed,undersample=undersample)
     val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds],distributed=distributed)
-    
+   
+    #redo class weights, since they are based on non-undersampled datasets
+    if undersample is not None:
+        inds = np.array([dataset.train_inds[i] for i in train_sampler])
+        dataset.calc_label_weights(inds=inds)
+
     #create data loaders for train/val/test datasets
     train_loader = data.DataLoader(
         train_dataset, batch_size=batch_size,
