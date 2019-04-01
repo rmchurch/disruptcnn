@@ -269,6 +269,7 @@ def main_worker(gpu,ngpus_per_node,args):
     cudnn.benchmark = True
 
 
+    #main training loop
     steps = 0
     total_loss = 0
     best_acc = 0
@@ -341,7 +342,11 @@ def main_worker(gpu,ngpus_per_node,args):
                 print('Train Epoch: %d [%d/%d (%0.2f%%)]\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
                             epoch, batch_idx, len(train_loader),
                             100. * (batch_idx / len(train_loader)),np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
-        
+    
+
+    print("Main training loop ended")
+
+
     if (args.test>0):
         plt.figure(figsize=[6.40,7.40])
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):

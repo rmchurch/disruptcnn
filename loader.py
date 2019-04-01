@@ -83,7 +83,6 @@ class EceiDataset(data.Dataset):
 
         self.shot = data_all[:,0].astype(int)
         self.length = len(self.shot)
-        if self.test > 0: self.length = self.test
 
         #TODO: how to split? Need to know model length (determines overlap), and how long
         #can fit into GPU
@@ -115,6 +114,7 @@ class EceiDataset(data.Dataset):
         #testing setup
         if self.test > 0:
             labels = self.disruptedi
+            self.length = self.test
             if self.test==1:
                 disinds = np.where(self.disruptedi)[0]
                 self.test_indices = disinds[np.random.randint(disinds.size,size=1)]
@@ -126,11 +126,11 @@ class EceiDataset(data.Dataset):
                 else:
                     assert len(test_indices)==self.test
                     self.test_indices = np.array(test_indices)
-            if self.test<32:
-                #preload test data for speed
-                self.test_data = []
-                for ind in self.test_indices:
-                    self.test_data += [self.read_data(ind)]
+            #if self.test<32:
+            #    #preload test data for speed
+            #    self.test_data = []
+            #    for ind in self.test_indices:
+            #        self.test_data += [self.read_data(ind)]
 
     def shots2seqs(self):
         self.shot_idxi = []; self.start_idxi = []; self.stop_idxi = []; self.disrupt_idxi = []
