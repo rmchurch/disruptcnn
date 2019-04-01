@@ -44,18 +44,18 @@ parser.add_argument('--nsub', type=int, default=5000000,
                     help='sequence length to optimize over, usually '
                     'set by GPU memory contrainsts(default: 5000000)')
 #learning specific
-parser.add_argument('--multiplier-warmup', type=float, default=8,
-                    help='warmup divide initial lr factor (default: 8)')
-parser.add_argument('--iterations-warmup', type=int, default=200,
-                    help='LR warmup iterations (default: 200)')
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
 parser.add_argument('--epochs', type=int, default=20,
                     help='upper epoch limit (default: 20)')
-parser.add_argument('--iterations-valid', type=int, default=200,
-                    help='iteration period to run validation(default: 200)')
+parser.add_argument('--iterations-valid', type=int, const=200, nargs='?',
+                    help='iteration period to run validation(default: 1 epoch if no flag, 200 iterations if flag but no value)')
+parser.add_argument('--iterations-warmup', type=int, const=200, nargs='?',
+                    help='LR warmup iterations (default: 5 epochs if no flag, 200 iterations if flag but no value)')
+parser.add_argument('--multiplier-warmup', type=float, default=8,
+                    help='warmup divide initial lr factor (default: 8)')
 parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: SGD)')
 parser.add_argument('--label-balance', type=str,default='const',
@@ -227,6 +227,11 @@ def main_worker(gpu,ngpus_per_node,args):
                                                             num_workers=args.workers,
                                                             undersample=args.undersample)
 
+    #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
+    #TODO Add separate argsparse for epochs_warmup and epochs_valid?
+    if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
+    if args.iterations_valid is None: args.iterations_valid = len(train_loader)
+
     #TODO generalize momentum?
     #TODO implement general optimizer
     if not args.lr_finder:
@@ -277,8 +282,7 @@ def main_worker(gpu,ngpus_per_node,args):
     total_loss = 0
     best_acc = 0
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_loader.sampler.set_epoch(epoch)
+        train_loader.sampler.set_epoch(epoch)
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
