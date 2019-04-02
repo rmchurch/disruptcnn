@@ -298,23 +298,29 @@ def main_worker(gpu,ngpus_per_node,args):
                     np.savez('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
                     total_loss = 0
             else:
-                if (iteration % args.iterations_valid == 0) or \
-                   (iteration % args.test == 0):
-                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                    print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                    iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
                 if iteration < args.iterations_warmup:
                     scheduler_warmup.step(iteration)
+                    if (iteration % args.iterations_valid == 0):
+                        lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                        print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                        iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
+                        total_loss = 0
                 else:
                     #TODO change to be general outside of test
                     if args.test==0:
                        if iteration % args.iterations_valid == 0:
                             #TODO Decide if use validation loss instead
                             scheduler_plateau.step(total_loss)
+                            lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                            iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
                             total_loss = 0
                     else:
                         if iteration % args.test == 0:
                             scheduler_plateau.step(total_loss)
+                            lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
+                                            iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
                             total_loss = 0
 
             #train single iteration
