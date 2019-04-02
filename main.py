@@ -345,8 +345,8 @@ def main_worker(gpu,ngpus_per_node,args):
             if batch_idx % args.log_interval == 0:
                 lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                 print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
-                            epoch, batch_idx, len(train_loader),iteration,
-                            100. * (batch_idx / len(train_loader)),np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                            epoch, batch_idx, len(train_loader), 100. * (batch_idx / len(train_loader)), iteration,
+                            np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
                 total_loss = 0
     
 
