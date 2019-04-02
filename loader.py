@@ -120,9 +120,11 @@ class EceiDataset(data.Dataset):
                 self.test_indices = disinds[np.random.randint(disinds.size,size=1)]
             else:
                 if test_indices is None:
-                    _,self.test_indices,_,_ = train_test_split(np.arange(labels.size),labels,
-                                                       stratify=labels,
-                                                       test_size=self.test)
+                    disinds = np.where(self.disruptedi)[0]
+                    disinds = np.random.choice(disinds,size=int(self.test/2))
+                    nondisinds = np.where(self.disruptedi==0)[0]
+                    nondisinds = np.random.choice(nondisinds,size=self.test - int(self.test/2))
+                    self.test_indices = np.concatenate([disinds,nondisinds])
                 else:
                     assert len(test_indices)==self.test
                     self.test_indices = np.array(test_indices)
