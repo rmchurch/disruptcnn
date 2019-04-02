@@ -69,8 +69,8 @@ parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
 parser.add_argument('--seed', type=int, default=None,
                     help='random seed (default: None)')
-parser.add_argument('--log-interval', type=int, default=1,
-                    help='Frequency of logging (default: 1)')
+parser.add_argument('--log-interval', type=int, const=100, nargs='?',
+                    help='Frequency of logging (default: iterations-valid or test if no flag, 100 iterations if flag but no value)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--world-size', default=-1, type=int,
@@ -231,6 +231,11 @@ def main_worker(gpu,ngpus_per_node,args):
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
     if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
     if args.iterations_valid is None: args.iterations_valid = len(train_loader)
+    if args.log_interval is None: 
+        if args.test==0:
+            args.log_interval = args.iterations_valid
+        else:
+            args.log_interval = len(train_loader)
 
     #TODO generalize momentum?
     #TODO implement general optimizer
@@ -290,7 +295,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #learning rate scheduler
             if args.lr_finder:
-                if (iteration>0) & (iteration % niter_per_interval == 0):
+                if (iteration>0) and (iteration % niter_per_interval == 0):
                     scheduler_lrfinder.step()
                     lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                     lr_history["lr"].append(lr_epoch)
@@ -300,28 +305,15 @@ def main_worker(gpu,ngpus_per_node,args):
             else:
                 if iteration < args.iterations_warmup:
                     scheduler_warmup.step(iteration)
-                    if (iteration % args.iterations_valid == 0):
-                        lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                        print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                        iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
-                        total_loss = 0
                 else:
                     #TODO change to be general outside of test
                     if args.test==0:
-                       if iteration % args.iterations_valid == 0:
+                       if (iteration>0) and (iteration % args.iterations_valid == 0):
                             #TODO Decide if use validation loss instead
                             scheduler_plateau.step(total_loss)
-                            lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                            iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
-                            total_loss = 0
                     else:
-                        if iteration % args.test == 0:
+                        if (iteration>0) and (iteration % len(train_loader) == 0):
                             scheduler_plateau.step(total_loss)
-                            lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                            iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
-                            total_loss = 0
 
             #train single iteration
             train_loss = train_seq(data,target,weight,model,optimizer,args)
@@ -354,7 +346,8 @@ def main_worker(gpu,ngpus_per_node,args):
                 lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                 print('Train Epoch: %d [%d/%d (%0.2f%%)]\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
                             epoch, batch_idx, len(train_loader),
-                            100. * (batch_idx / len(train_loader)),np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                            100. * (batch_idx / len(train_loader)),np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                total_loss = 0
     
 
     print("Main training loop ended")
