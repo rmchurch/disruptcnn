@@ -501,22 +501,29 @@ def evaluate(val_loader,model,args):
 
         total_loss /= len(val_loader)
         if args.distributed:
-            dist.all_reduce(torch.tensor(total_loss), op=dist.ReduceOp.SUM)
-            dist.all_reduce(torch.tensor(correct), op=dist.ReduceOp.SUM)
-            dist.all_reduce(torch.tensor(total), op=dist.ReduceOp.SUM)
-            dist.all_reduce(torch.tensor(TPs), op=dist.ReduceOp.SUM)
-            dist.all_reduce(torch.tensor(TP_FPs), op=dist.ReduceOp.SUM)
-            dist.all_reduce(torch.tensor(TP_FNs), op=dist.ReduceOp.SUM)
+            #print('Before all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',(time.time()-args.tstart))
+            total_loss = torch.tensor(total_loss)
+            correct = torch.tensor(correct)
+            total = torch.tensor(total)
+            TPs = torch.tensor(TPs)
+            TP_FPs = torch.tensor(TP_FPs)
+            TP_FNs = torch.tensor(TP_FNs)
+            dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
+            dist.all_reduce(correct, op=dist.ReduceOp.SUM)
+            dist.all_reduce(total, op=dist.ReduceOp.SUM)
+            dist.all_reduce(TPs, op=dist.ReduceOp.SUM)
+            dist.all_reduce(TP_FPs, op=dist.ReduceOp.SUM)
+            dist.all_reduce(TP_FNs, op=dist.ReduceOp.SUM)
             total_loss = total_loss/args.world_size
-            correct = correct.numpy(); TPs = TPs.numpy()
-            TP_FPs = TP_FPs.numpy(); TP_FNs = TP_FNs.numpy()
+            #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
+            total_loss = total_loss.item(); total = total.item(); correct = correct.numpy(); TPs = TPs.numpy(); TP_FPs = TP_FPs.numpy(); TP_FNs = TP_FNs.numpy()
+        f1 = f1_score(TPs,TP_FPs,TP_FNs)
+        f1max = np.nanmax(f1)
+        correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            f1 = f1_score(TPs,TP_FPs,TP_FNs)
-            f1max = np.nanmax(f1)
-            correctmax = np.nanmax(correct).astype(int)
-            print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%), F1: {:.6e}\n'.format(
-                    total_loss, correctmax, total,
-                    100. * correctmax / total, f1max))
+            print('\nValidation set [%d]: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%), F1: {:.6e}, Time: {:.2f}\n'.format(
+                    len(val_loader.dataset),total_loss, correctmax, total,
+                    100. * correctmax / total, f1max,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max
 
 def accuracy(output,target,threshold=0.5):
