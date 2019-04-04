@@ -507,7 +507,7 @@ def evaluate(val_loader,model,args):
             dist.all_reduce(torch.tensor(TPs), op=dist.ReduceOp.SUM)
             dist.all_reduce(torch.tensor(TP_FPs), op=dist.ReduceOp.SUM)
             dist.all_reduce(torch.tensor(TP_FNs), op=dist.ReduceOp.SUM)
-            total_loss = total_loss.item()/args.world_size; total = total.item()
+            total_loss = total_loss/args.world_size
             correct = correct.numpy(); TPs = TPs.numpy()
             TP_FPs = TP_FPs.numpy(); TP_FNs = TP_FNs.numpy()
         if args.rank==0:
