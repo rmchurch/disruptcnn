@@ -349,7 +349,8 @@ def main_worker(gpu,ngpus_per_node,args):
                     }, is_best,filename='checkpoint.'+os.environ['SLURM_JOB_ID']+'.pth.tar')
             
             #log training 
-            if batch_idx % args.log_interval == 0:
+            if (batch_idx % args.log_interval == 0) and (args.rank==0):
+                total_loss = all_reduce(total_loss).item()
                 lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                 print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
                             epoch, batch_idx, len(train_loader), 100. * (batch_idx / len(train_loader)), iteration,
@@ -386,6 +387,10 @@ def main_worker(gpu,ngpus_per_node,args):
     if is_writer: writer.close()
     time.sleep(180) #allow all processes to finish
 
+def all_reduce(data,op=dist.ReduceOp.SUM):
+    data = torch.tensor(data)
+    dist.all_reduce(data,op=op)
+    return data
 
 def plot_output(data,output,target,weight,args,filename='output.png',title=''):
     plt.clf()
@@ -502,26 +507,19 @@ def evaluate(val_loader,model,args):
         total_loss /= len(val_loader)
         if args.distributed:
             #print('Before all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',(time.time()-args.tstart))
-            total_loss = torch.tensor(total_loss)
-            correct = torch.tensor(correct)
-            total = torch.tensor(total)
-            TPs = torch.tensor(TPs)
-            TP_FPs = torch.tensor(TP_FPs)
-            TP_FNs = torch.tensor(TP_FNs)
-            dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
-            dist.all_reduce(correct, op=dist.ReduceOp.SUM)
-            dist.all_reduce(total, op=dist.ReduceOp.SUM)
-            dist.all_reduce(TPs, op=dist.ReduceOp.SUM)
-            dist.all_reduce(TP_FPs, op=dist.ReduceOp.SUM)
-            dist.all_reduce(TP_FNs, op=dist.ReduceOp.SUM)
+            total_loss = all_reduce(total_loss).item()
+            correct = all_reduce(correct).numpy()
+            total = all_reduce(total).item()
+            TPs = all_reduce(TPs).numpy()
+            TP_FPs = all_reduce(TP_FPs).numpy()
+            TP_FNs = all_reduce(TP_FNs).numpy()
             total_loss = total_loss/args.world_size
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
-            total_loss = total_loss.item(); total = total.item(); correct = correct.numpy(); TPs = TPs.numpy(); TP_FPs = TP_FPs.numpy(); TP_FNs = TP_FNs.numpy()
         f1 = f1_score(TPs,TP_FPs,TP_FNs)
         f1max = np.nanmax(f1)
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set [%d]: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%), F1: {:.6e}, Time: {:.2f}\n'.format(
+            print('\nValidation set [{}]: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%), F1: {:.6e}, Time: {:.2f}\n'.format(
                     len(val_loader.dataset),total_loss, correctmax, total,
                     100. * correctmax / total, f1max,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max
