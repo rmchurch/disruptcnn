@@ -212,6 +212,8 @@ def main_worker(gpu,ngpus_per_node,args):
         # DataParallel will divide and allocate batch_size to all available GPUs
         # model = torch.nn.DataParallel(model).cuda()
 
+    if (args.test>0) and (args.test < args.batch_size): args.batch_size = args.test
+
     print(args)
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
                           test=args.test,test_indices=args.test_indices,
@@ -236,6 +238,9 @@ def main_worker(gpu,ngpus_per_node,args):
             args.log_interval = args.iterations_valid
         else:
             args.log_interval = len(train_loader)
+
+    #TODO Generalize
+    args.thresholds = np.linspace(0.1,0.9,9)
 
     #TODO generalize momentum?
     #TODO implement general optimizer
@@ -323,11 +328,13 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #validate
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
-                valid_loss = evaluate(val_loader, model, args)
-                #TODO Replace when accuracy written
-                acc = valid_loss
+                valid_loss, valid_acc, valid_f1 = evaluate(val_loader, model, args)
+                acc = valid_acc
                 
-                if is_writer: writer.add_scalar('valid_loss',valid_loss,iteration)
+                if is_writer: 
+                    writer.add_scalar('valid_loss',valid_loss,iteration)
+                    writer.add_scalar('valid_acc',valid_acc,iteration)
+                    writer.add_scalar('valid_f1',valid_f1,iteration)
                 # remember best acc and save checkpoint
                 is_best = acc > best_acc
                 best_acc = max(acc, best_acc)
@@ -358,14 +365,12 @@ def main_worker(gpu,ngpus_per_node,args):
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
             with torch.no_grad():
                 data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
-                data = data.view(args.batch_size, args.input_channels, -1)
+                data = data.view(data.shape[0], args.input_channels, -1)
                 output = model(data)
                 loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:],reduction='sum').item()/(output.shape[-1]-args.nrecept+1)
-                train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
-                                          optimizer=None,weight=weight,
-                                          train=False,clip=args.clip)
 
-                plot_output(data,output,target,weight,args,
+                for (i,gi) in enumerate(global_index):
+                    plot_output(data[i,...][np.newaxis,...],output[i,...][np.newaxis,...],target[i,...][np.newaxis,...],weight[i,...][np.newaxis,...],args,
                            filename='test_output_'+str(int(os.environ['SLURM_JOB_ID']))+'_ind_'+str(global_index.item())+'.png',
                            title='Loss: %0.4e' % loss)
 
@@ -403,16 +408,16 @@ def train_seq(data, target, weight, model, optimizer, args):
         data, target, weight  = data.cuda(non_blocking=True), \
                                 target.cuda(non_blocking=True), \
                                 weight.cuda(non_blocking=True)
-    data = data.view(args.batch_size, args.input_channels, -1)
+    data = data.view(data.shape[0], args.input_channels, -1)
     
     #No data splitting
     optimizer.zero_grad()
-    ys = model(data)
+    output = model(data)
     #do mean of loss by hand to handle unequal sequence lengths
-    loss = F.binary_cross_entropy(ys[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
+    loss = F.binary_cross_entropy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
     loss.backward()
     if args.clip is not None:
-        torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
     optimizer.step()
 
     #split data into subsequences to process
@@ -456,7 +461,7 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
         ####END REMOVE ME
         if train: loss.backward()
         if clip is not None:
-            torch.nn.utils.clip_grad_norm(model.parameters(), clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
         total_losses += loss.item()
         if (optimizer is not None) & (not accumulate):
             optimizer.step()
@@ -469,40 +474,66 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
 def evaluate(val_loader,model,args):
     model.eval()
     total_loss = 0
-    correct = 0
-    #first = True
+    total = 0
+    correct = np.zeros(args.thresholds.shape)
+    TPs = np.zeros(args.thresholds.shape)
+    TP_FPs = np.zeros(args.thresholds.shape)
+    TP_FNs = np.zeros(args.thresholds.shape)
     with torch.no_grad(): #turns off backprop, saves computation
         for batch_idx,(data, target,global_index,weight) in enumerate(val_loader):
             data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
-            data = data.view(args.batch_size, args.input_channels, -1)
+            data = data.view(data.shape[0], args.input_channels, -1)
             output = model(data)
-            #loss += F.binary_cross_entropy(output, target, size_average=False).item()
             loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:]).item()
             total_loss += loss
-            for gi in global_index:
+            total += target[...,args.nrecept-1:].numel()
+            for i,threshold in enumerate(args.thresholds):
+                correct[i] += accuracy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold) 
+                TP, TP_FP, TP_FN = f1_score_pieces(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
+                TPs[i] += TP; TP_FPs[i] += TP_FP; TP_FNs[i] += TP_FN
+            
+            #plot disruptive output
+            for (i,gi) in enumerate(global_index):
                 if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
                     plot_output(data,output,target,weight,args,
                             filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
                             title='Loss: %0.4e' % float(loss))
-                    #first = False
-            #TODO: Enter validation loss here, modify from this simple
-            #pred = output.data.max(1, keepdim=True)[1]
-            #correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-            correct = -1
-            print('Validation  [%d/%d (%0.2f%%)]\tDisrupted: %0.4f\tLoss: %0.6e\tTime: %0.2f\tMem: %0.1f' % (
-                         batch_idx, len(val_loader),
-                        100. * (batch_idx)  / len(val_loader), np.sum(val_loader.dataset.dataset.disruptedi[global_index])/global_index.size(),loss, (time.time()-args.tstart),psutil.virtual_memory().used/1024**3.))
 
         total_loss /= len(val_loader)
-        print('Total_loss: %0.4e, rank: %d' % (total_loss,args.rank))
         if args.distributed:
             dist.all_reduce(torch.tensor(total_loss), op=dist.ReduceOp.SUM)
+            dist.all_reduce(torch.tensor(correct), op=dist.ReduceOp.SUM)
+            dist.all_reduce(torch.tensor(total), op=dist.ReduceOp.SUM)
+            dist.all_reduce(torch.tensor(TPs), op=dist.ReduceOp.SUM)
+            dist.all_reduce(torch.tensor(TP_FPs), op=dist.ReduceOp.SUM)
+            dist.all_reduce(torch.tensor(TP_FNs), op=dist.ReduceOp.SUM)
+            total_loss = total_loss.item()/args.world_size; total = total.item()
+            correct = correct.numpy(); TPs = TPs.numpy()
+            TP_FPs = TP_FPs.numpy(); TP_FNs = TP_FNs.numpy()
         if args.rank==0:
-            print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-                    total_loss, correct, len(val_loader.dataset),
-                    100. * correct / len(val_loader.dataset)))
-        return total_loss
+            f1 = f1_score(TPs,TP_FPs,TP_FNs)
+            f1max = np.nanmax(f1)
+            correctmax = np.nanmax(correct).astype(int)
+            print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%), F1: {:.6e}\n'.format(
+                    total_loss, correctmax, total,
+                    100. * correctmax / total, f1max))
+        return total_loss,correctmax/total, f1max
 
+def accuracy(output,target,threshold=0.5):
+    pred = output.ge(threshold)
+    return pred.eq(target.type_as(pred).view_as(pred)).cpu().float().sum()
+
+def f1_score_pieces(output,target,threshold=0.5):
+    pred = output.ge(threshold).type_as(target)
+    TP = (pred*target).cpu().float().sum()
+    TP_FP = pred.cpu().sum()
+    TP_FN = target.cpu().sum()
+    return TP, TP_FP, TP_FN 
+
+def f1_score(TP,TP_FP,TP_FN,eps=1e-10):
+    precision = TP/TP_FP+eps
+    recall = TP/TP_FN+eps
+    return 2./(1./precision + 1./recall)
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

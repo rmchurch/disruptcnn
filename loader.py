@@ -277,7 +277,7 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
 
     #shuffle dataset each epoch for training data using DistrbutedSampler. Also splits among workers. 
     train_sampler = StratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds],distributed=distributed,undersample=undersample)
-    val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds],distributed=distributed)
+    val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds],distributed=distributed,undersample=undersample)
    
     #redo class weights, since they are based on non-undersampled datasets
     if undersample is not None:
@@ -287,13 +287,13 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
     #create data loaders for train/val/test datasets
     train_loader = data.DataLoader(
         train_dataset, batch_size=batch_size,
-        num_workers=num_workers, pin_memory=True, sampler=train_sampler,
-        drop_last=True)
+        num_workers=num_workers, pin_memory=True, sampler=train_sampler)#,
+        #drop_last=True)
 
     val_loader = data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True, sampler=val_sampler,
-        drop_last=True)
+        num_workers=num_workers, pin_memory=True, sampler=val_sampler)#,
+        #drop_last=True)
         #val_dataset, batch_size=batch_size, shuffle=False,
         #num_workers=num_workers, pin_memory=True)
 
