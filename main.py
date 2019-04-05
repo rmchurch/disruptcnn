@@ -100,6 +100,8 @@ parser.add_argument('--no-normalize', action='store_true',
                     help='dont normalize the data (default: False)')
 parser.add_argument('--lr-finder', action='store_true',
                     help='Learning rate finder test (default: False)')
+parser.add_argument('--plot', action='store_true',
+                    help='plot validation disruptive sequences (default: False)')
 
 
 
@@ -498,11 +500,12 @@ def evaluate(val_loader,model,args):
                 TPs[i] += TP; TP_FPs[i] += TP_FP; TP_FNs[i] += TP_FN
             
             #plot disruptive output
-            for (i,gi) in enumerate(global_index):
-                if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
-                    plot_output(data,output,target,weight,args,
-                            filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
-                            title='Loss: %0.4e' % float(loss))
+            if args.plot:
+                for (i,gi) in enumerate(global_index):
+                    if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
+                        plot_output(data,output,target,weight,args,
+                                filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
+                                title='Loss: %0.4e' % float(loss))
 
         total_loss /= len(val_loader)
         if args.distributed:
