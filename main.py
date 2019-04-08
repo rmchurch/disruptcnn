@@ -523,9 +523,9 @@ def evaluate(val_loader,model,args):
         f1max = np.nanmax(f1)
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set [{}]: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%), F1: {:.6e}, Time: {:.2f}\n'.format(
-                    len(val_loader.dataset),total_loss, correctmax, total,
-                    100. * correctmax / total, f1max,(time.time()-args.tstart)))
+            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tTime: {:.2f}\n'.format(
+                    len(val_loader.dataset),total_loss,
+                    correctmax / total, correctmax, total, f1max,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max
 
 def accuracy(output,target,threshold=0.5):
