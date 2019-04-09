@@ -330,7 +330,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #log training 
             if batch_idx % args.log_interval == 0:
-                total_loss = all_reduce(total_loss).item()
+                if args.distributed: total_loss = all_reduce(total_loss).item()
                 if args.rank==0:
                     lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                     print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
