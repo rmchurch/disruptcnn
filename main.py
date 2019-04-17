@@ -330,7 +330,9 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #log training 
             if batch_idx % args.log_interval == 0:
-                if args.distributed: total_loss = all_reduce(total_loss).item()
+                if args.distributed: 
+                    total_loss = all_reduce(total_loss).item()
+                    total_loss = total_loss/args.world_size
                 if args.rank==0:
                     lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                     print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
@@ -432,7 +434,7 @@ def train_seq(data, target, weight, model, optimizer, args):
     #train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
     #                          optimizer=optimizer,weight=weight,
     #                          train=True,clip=args.clip,accumulate=args.accumulate)
-    return loss.item()
+    return loss
 
 
 def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
@@ -482,17 +484,22 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
 def evaluate(val_loader,model,args):
     model.eval()
     total_loss = 0
-    total = 0
-    correct = np.zeros(args.thresholds.shape)
-    TPs = np.zeros(args.thresholds.shape)
-    TP_FPs = np.zeros(args.thresholds.shape)
-    TP_FNs = np.zeros(args.thresholds.shape)
+    total = torch.tensor(0).cuda()
+    correct = torch.zeros(args.thresholds.shape)
+    TPs = torch.zeros(args.thresholds.shape)
+    TP_FPs = torch.zeros(args.thresholds.shape)
+    TP_FNs = torch.zeros(args.thresholds.shape)
+    if 'nccl' in args.backend:
+        correct = correct.cuda()
+        TPs = TPs.cuda()
+        TP_FPs = TP_FPs.cuda()
+        TP_FNs = TP_FNs.cuda()
     with torch.no_grad(): #turns off backprop, saves computation
         for batch_idx,(data, target,global_index,weight) in enumerate(val_loader):
             data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
             data = data.view(data.shape[0], args.input_channels, -1)
             output = model(data)
-            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:]).item()
+            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:])
             total_loss += loss
             total += target[...,args.nrecept-1:].numel()
             for i,threshold in enumerate(args.thresholds):
@@ -512,11 +519,11 @@ def evaluate(val_loader,model,args):
         if args.distributed:
             #print('Before all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',(time.time()-args.tstart))
             total_loss = all_reduce(total_loss).item()
-            correct = all_reduce(correct).numpy()
+            correct = all_reduce(correct).cpu().numpy()
             total = all_reduce(total).item()
-            TPs = all_reduce(TPs).numpy()
-            TP_FPs = all_reduce(TP_FPs).numpy()
-            TP_FNs = all_reduce(TP_FNs).numpy()
+            TPs = all_reduce(TPs).cpu().numpy()
+            TP_FPs = all_reduce(TP_FPs).cpu().numpy()
+            TP_FNs = all_reduce(TP_FNs).cpu().numpy()
             total_loss = total_loss/args.world_size
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
         f1 = f1_score(TPs,TP_FPs,TP_FNs)
@@ -530,13 +537,13 @@ def evaluate(val_loader,model,args):
 
 def accuracy(output,target,threshold=0.5):
     pred = output.ge(threshold)
-    return pred.eq(target.type_as(pred).view_as(pred)).cpu().float().sum()
+    return pred.eq(target.type_as(pred).view_as(pred)).float().sum()
 
 def f1_score_pieces(output,target,threshold=0.5):
     pred = output.ge(threshold).type_as(target)
-    TP = (pred*target).cpu().float().sum()
-    TP_FP = pred.cpu().sum()
-    TP_FN = target.cpu().sum()
+    TP = (pred*target).float().sum()
+    TP_FP = pred.sum()
+    TP_FN = target.sum()
     return TP, TP_FP, TP_FN 
 
 def f1_score(TP,TP_FP,TP_FN,eps=1e-10):
