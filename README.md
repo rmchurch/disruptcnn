@@ -3,7 +3,7 @@ DisruptCNN presents code using the Temporal Convolutional Networks (convolutiona
 
 	@article{ChurchillNeurIPS2019,
 		author    = {R. Michael Churchill and the DIII-D team},
-		title     = {},
+		title     = {Deep convolutional neural networks for multi-scale time-series classification and application to disruption prediction in fusion devices},
 		journal   = {arXiv:},
 		year      = {2019},
 	}
