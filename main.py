@@ -253,6 +253,7 @@ def main_worker(gpu,ngpus_per_node,args):
         args.epochs = int(np.ceil(niter/len(train_loader)))
         args.lr = 1e-5 #start lr
         lr_end = 1e-2
+
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
         lambda1=lambda iteration: (lr_end/args.lr)**(iteration/niter)
         scheduler_lrfinder = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
