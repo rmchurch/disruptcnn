@@ -84,11 +84,6 @@ class EceiDataset(data.Dataset):
         self.shot = data_all[:,0].astype(int)
         self.length = len(self.shot)
 
-        #TODO: how to split? Need to know model length (determines overlap), and how long
-        #can fit into GPU
-        #No longer split into sequences at the Dataloader level, chunk later
-        #self.shots2seqs()
-
         #create offsets placeholder
         filename = self.create_filename(0)
         f = h5py.File(filename,'r')

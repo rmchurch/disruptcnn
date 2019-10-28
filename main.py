@@ -105,15 +105,6 @@ parser.add_argument('--plot', action='store_true',
 
 
 
-#TODO Generalize
-#batch_size = 1#args.batch_size
-#n_classes = 1 #for binary classification
-#input_channels = 160
-#steps = 0
-#seq_length = int(Nseq) #TODO: This might be different from how I defined it in loader.py
-#dilation_sizes = [1,10,100,1000,6783] #dilation=10, except last which is set to give receptive field ~Nmodel=300,000
-#Nsub = 5000000 #found by taking receptive field, and scaling for 15GB of GPU memory #TODO automate
-#Nrecept = 300000
 root = '/scratch/gpfs/rmc2/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
@@ -582,22 +573,6 @@ def calc_seq_length(kernel_size,dilation_sizes,nlevel):
     return 1 + 2*(kernel_size-1)*np.sum(dilation_sizes)
 
 
-class Metric(object):
-    def __init__(self, name):
-        self.name = name
-        self.sum = torch.tensor(0.)
-        self.n = torch.tensor(0.)
-        
-    def update(self, val):
-        dist.all_reduce(val, op=dist.reduce_op.SUM)
-        self.sum += val
-        self.n += 1
-        
-    @property
-    def avg(self):
-        return self.sum / self.n
-
 if __name__ == "__main__":
     tstart = time.time()
     main()
-    #TODO: test data set, create final statistics (ROC? Printed recall/precision?)
