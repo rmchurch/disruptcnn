@@ -44,31 +44,33 @@ parser.add_argument('--nsub', type=int, default=5000000,
                     help='sequence length to optimize over, usually '
                     'set by GPU memory contrainsts(default: 5000000)')
 #learning specific
-parser.add_argument('--multiplier-warmup', type=float, default=8,
-                    help='warmup divide initial lr factor (default: 8)')
-parser.add_argument('--iterations-warmup', type=int, default=200,
-                    help='LR warmup iterations (default: 200)')
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
 parser.add_argument('--epochs', type=int, default=20,
                     help='upper epoch limit (default: 20)')
-parser.add_argument('--iterations-valid', type=int, default=200,
-                    help='iteration period to run validation(default: 200)')
+parser.add_argument('--iterations-valid', type=int, const=200, nargs='?',
+                    help='iteration period to run validation(default: 1 epoch if no flag, 200 iterations if flag but no value)')
+parser.add_argument('--iterations-warmup', type=int, const=200, nargs='?',
+                    help='LR warmup iterations (default: 5 epochs if no flag, 200 iterations if flag but no value)')
+parser.add_argument('--multiplier-warmup', type=float, default=8,
+                    help='warmup divide initial lr factor (default: 8)')
 parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: SGD)')
 parser.add_argument('--label-balance', type=str,default='const',
                     help="Type of label balancing. 'const' or 'none', (default: const)")
 parser.add_argument('--accumulate', action='store_true',
                     help='accumulate gradients over entire batch, i.e. shot (default: False)')
+parser.add_argument('--undersample', type=float, nargs='?',const=1.0,
+                    help='fraction of non-disruptive/disruptive subsequences (default: None if no flag, 1.0 if flag but no value)')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
 parser.add_argument('--seed', type=int, default=None,
                     help='random seed (default: None)')
-parser.add_argument('--log-interval', type=int, default=1,
-                    help='Frequency of logging (default: 1)')
+parser.add_argument('--log-interval', type=int, const=100, nargs='?',
+                    help='Frequency of logging (default: iterations-valid or test if no flag, 100 iterations if flag but no value)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--world-size', default=-1, type=int,
@@ -98,18 +100,11 @@ parser.add_argument('--no-normalize', action='store_true',
                     help='dont normalize the data (default: False)')
 parser.add_argument('--lr-finder', action='store_true',
                     help='Learning rate finder test (default: False)')
+parser.add_argument('--plot', action='store_true',
+                    help='plot validation disruptive sequences (default: False)')
 
 
 
-#TODO Generalize
-#batch_size = 1#args.batch_size
-#n_classes = 1 #for binary classification
-#input_channels = 160
-#steps = 0
-#seq_length = int(Nseq) #TODO: This might be different from how I defined it in loader.py
-#dilation_sizes = [1,10,100,1000,6783] #dilation=10, except last which is set to give receptive field ~Nmodel=300,000
-#Nsub = 5000000 #found by taking receptive field, and scaling for 15GB of GPU memory #TODO automate
-#Nrecept = 300000
 root = '/scratch/gpfs/rmc2/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
@@ -120,7 +115,7 @@ disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
 def main():
     args = parser.parse_args()
 
-    assert (args.batch_size==1), "Currently need batch_size=1, due to variable length sequences"
+    #assert (args.batch_size==1), "Currently need batch_size=1, due to variable length sequences"
     assert torch.cuda.is_available(), "GPU is currently required"
 
     args.world_size = int(os.environ['SLURM_NTASKS'])
@@ -210,18 +205,35 @@ def main_worker(gpu,ngpus_per_node,args):
         # DataParallel will divide and allocate batch_size to all available GPUs
         # model = torch.nn.DataParallel(model).cuda()
 
+    if (args.test>0) and (args.test < args.batch_size): args.batch_size = args.test
+
     print(args)
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
                           test=args.test,test_indices=args.test_indices,
                           label_balance=args.label_balance,
                           normalize=(not args.no_normalize),
-                          data_step=args.data_step)
+                          data_step=args.data_step,
+                          nsub=args.nsub,nrecept=args.nrecept)
     #create the indices for train/val/test split
     dataset.train_val_test_split()
     #create data loaders
     train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                             distributed=args.distributed,
-                                                            num_workers=args.workers)
+                                                            num_workers=args.workers,
+                                                            undersample=args.undersample)
+
+    #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
+    #TODO Add separate argsparse for epochs_warmup and epochs_valid?
+    if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
+    if args.iterations_valid is None: args.iterations_valid = len(train_loader)
+    if args.log_interval is None: 
+        if args.test==0:
+            args.log_interval = args.iterations_valid
+        else:
+            args.log_interval = len(train_loader)
+
+    #TODO Generalize
+    args.thresholds = np.linspace(0.1,0.9,9)
 
     #TODO generalize momentum?
     #TODO implement general optimizer
@@ -235,10 +247,13 @@ def main_worker(gpu,ngpus_per_node,args):
         scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5)
     else:
         lr_history = {"lr": [], "loss": []}
-        niter = 100
-        args.epochs = 1 #niter
-        lr_end = 10.0
+        ninterval = 800 #number of intervals (one interval is one learning rate value)
+        niter_per_interval = 1 #number of iterations per interval
+        niter = ninterval*niter_per_interval
+        args.epochs = int(np.ceil(niter/len(train_loader)))
         args.lr = 1e-5 #start lr
+        lr_end = 1e-2
+
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True)
         lambda1=lambda iteration: (lr_end/args.lr)**(iteration/niter)
         scheduler_lrfinder = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
@@ -261,12 +276,17 @@ def main_worker(gpu,ngpus_per_node,args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
+    #this autotunes algo on GPU. If variable input (like before with single shot), would
+    #be worse performance
+    cudnn.benchmark = True
+
+
+    #main training loop
     steps = 0
     total_loss = 0
     best_acc = 0
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_loader.sampler.set_epoch(epoch)
+        train_loader.sampler.set_epoch(epoch)
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
@@ -274,7 +294,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #learning rate scheduler
             if args.lr_finder:
-                if iteration % 16 == 0:
+                if (iteration>0) and (iteration % niter_per_interval == 0):
                     scheduler_lrfinder.step()
                     lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                     lr_history["lr"].append(lr_epoch)
@@ -287,18 +307,12 @@ def main_worker(gpu,ngpus_per_node,args):
                 else:
                     #TODO change to be general outside of test
                     if args.test==0:
-                        if iteration % args.iterations_valid == 0:
+                       if (iteration>0) and (iteration % args.iterations_valid == 0):
                             #TODO Decide if use validation loss instead
                             scheduler_plateau.step(total_loss)
-                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                        iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
-                            total_loss = 0
                     else:
-                        if iteration % args.test == 0:
+                        if (iteration>0) and (iteration % len(train_loader) == 0):
                             scheduler_plateau.step(total_loss)
-                            print('Train Iteration: %d \tTotal Loss: %0.6e\tSteps: %d\tTime: %0.2f\tLR: %0.2e' % (
-                                        iteration, total_loss, steps,(time.time()-args.tstart),lr_epoch))
-                            total_loss = 0
 
             #train single iteration
             train_loss = train_seq(data,target,weight,model,optimizer,args)
@@ -306,14 +320,27 @@ def main_worker(gpu,ngpus_per_node,args):
             steps += data.shape[0]*data.shape[-1]
             total_loss += train_loss
 
+            #log training 
+            if batch_idx % args.log_interval == 0:
+                if args.distributed: 
+                    total_loss = all_reduce(total_loss).item()
+                    total_loss = total_loss/args.world_size
+                if args.rank==0:
+                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                    print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
+                                epoch, batch_idx, len(train_loader), 100. * (batch_idx / len(train_loader)), iteration,
+                                np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                total_loss = 0
+    
             #validate
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
-                valid_loss = evaluate(val_loader, model, args)
-                #TODO Replace when accuracy written
-                acc = valid_loss
+                valid_loss, valid_acc, valid_f1 = evaluate(val_loader, model, args)
+                acc = valid_acc
                 
-                if is_writer:
+                if is_writer: 
                     writer.add_scalar('valid_loss',valid_loss,iteration)
+                    writer.add_scalar('valid_acc',valid_acc,iteration)
+                    writer.add_scalar('valid_f1',valid_f1,iteration)
                 # remember best acc and save checkpoint
                 is_best = acc > best_acc
                 best_acc = max(acc, best_acc)
@@ -327,26 +354,21 @@ def main_worker(gpu,ngpus_per_node,args):
                         'optimizer' : optimizer.state_dict(),
                     }, is_best,filename='checkpoint.'+os.environ['SLURM_JOB_ID']+'.pth.tar')
             
-            
-            if batch_idx % args.log_interval == 0:
-                lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIndex: %d\tDisrupted: %d\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
-                            epoch, (batch_idx*args.world_size+args.rank), len(train_loader.dataset),
-                            100. * (batch_idx*args.world_size+args.rank)  / len(train_loader.dataset), global_index, train_loader.dataset.dataset.disrupted[global_index],train_loss, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
-        
+
+    print("Main training loop ended")
+
+
     if (args.test>0):
         plt.figure(figsize=[6.40,7.40])
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
             with torch.no_grad():
                 data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
-                data = data.view(args.batch_size, args.input_channels, -1)
+                data = data.view(data.shape[0], args.input_channels, -1)
                 output = model(data)
                 loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:],reduction='sum').item()/(output.shape[-1]-args.nrecept+1)
-                train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
-                                          optimizer=None,weight=weight,
-                                          train=False,clip=args.clip)
 
-                plot_output(data,output,target,weight,args,
+                for (i,gi) in enumerate(global_index):
+                    plot_output(data[i,...][np.newaxis,...],output[i,...][np.newaxis,...],target[i,...][np.newaxis,...],weight[i,...][np.newaxis,...],args,
                            filename='test_output_'+str(int(os.environ['SLURM_JOB_ID']))+'_ind_'+str(global_index.item())+'.png',
                            title='Loss: %0.4e' % loss)
 
@@ -362,6 +384,10 @@ def main_worker(gpu,ngpus_per_node,args):
     if is_writer: writer.close()
     time.sleep(180) #allow all processes to finish
 
+def all_reduce(data,op=dist.ReduceOp.SUM):
+    data = torch.tensor(data)
+    dist.all_reduce(data,op=op)
+    return data
 
 def plot_output(data,output,target,weight,args,filename='output.png',title=''):
     plt.clf()
@@ -384,12 +410,23 @@ def train_seq(data, target, weight, model, optimizer, args):
         data, target, weight  = data.cuda(non_blocking=True), \
                                 target.cuda(non_blocking=True), \
                                 weight.cuda(non_blocking=True)
-    data = data.view(args.batch_size, args.input_channels, -1)
+    data = data.view(data.shape[0], args.input_channels, -1)
+    
+    #No data splitting
+    optimizer.zero_grad()
+    output = model(data)
+    #do mean of loss by hand to handle unequal sequence lengths
+    loss = F.binary_cross_entropy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
+    loss.backward()
+    if args.clip is not None:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+    optimizer.step()
+
     #split data into subsequences to process
-    train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
-                              optimizer=optimizer,weight=weight,
-                              train=True,clip=args.clip,accumulate=args.accumulate)
-    return train_loss
+    #train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
+    #                          optimizer=optimizer,weight=weight,
+    #                          train=True,clip=args.clip,accumulate=args.accumulate)
+    return loss
 
 
 def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
@@ -398,7 +435,7 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
     '''
     if weight is None: weight = torch.ones(target.shape).cuda()
     N = data.shape[-1] #length of entire sequence
-    num_seq_frac = (N - Nsub)/float(Nsub - Nrecept + 1)+1
+    num_seq_frac = (N - Nsub)/float(Nsub - Nrecept + 1)+1 #this assumes N>=Nrecept
     num_seq = np.ceil(num_seq_frac).astype(int)
     total_losses = 0
     for m in range(num_seq):
@@ -426,7 +463,7 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
         ####END REMOVE ME
         if train: loss.backward()
         if clip is not None:
-            torch.nn.utils.clip_grad_norm(model.parameters(), clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
         total_losses += loss.item()
         if (optimizer is not None) & (not accumulate):
             optimizer.step()
@@ -439,40 +476,72 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
 def evaluate(val_loader,model,args):
     model.eval()
     total_loss = 0
-    correct = 0
-    #first = True
+    total = torch.tensor(0).cuda()
+    correct = torch.zeros(args.thresholds.shape)
+    TPs = torch.zeros(args.thresholds.shape)
+    TP_FPs = torch.zeros(args.thresholds.shape)
+    TP_FNs = torch.zeros(args.thresholds.shape)
+    if 'nccl' in args.backend:
+        correct = correct.cuda()
+        TPs = TPs.cuda()
+        TP_FPs = TP_FPs.cuda()
+        TP_FNs = TP_FNs.cuda()
     with torch.no_grad(): #turns off backprop, saves computation
         for batch_idx,(data, target,global_index,weight) in enumerate(val_loader):
             data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
-            data = data.view(args.batch_size, args.input_channels, -1)
+            data = data.view(data.shape[0], args.input_channels, -1)
             output = model(data)
-            #loss += F.binary_cross_entropy(output, target, size_average=False).item()
-            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:],reduction='sum').item()/(output.shape[-1]-args.nrecept+1)
+            loss = F.binary_cross_entropy(output[...,args.nrecept-1:], target[...,args.nrecept-1:], weight=weight[...,args.nrecept-1:])
             total_loss += loss
-            if ((val_loader.dataset.dataset.disrupted[global_index]==1)):
-                plot_output(data,output,target,weight,args,
-                        filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(global_index))+'.png',
-                        title='Loss: %0.4e' % float(loss))
-                #first = False
-            #TODO: Enter validation loss here, modify from this simple
-            #pred = output.data.max(1, keepdim=True)[1]
-            #correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-            correct = -1
-            print('Validation  [%d/%d (%0.2f%%)]\tIndex: %d\tDisrupted: %d\tLoss: %0.6e\tTime: %0.2f\tMem: %0.1f' % (
-                         (batch_idx*args.world_size+args.rank), len(val_loader.dataset),
-                        100. * (batch_idx*args.world_size+args.rank)  / len(val_loader.dataset), global_index, val_loader.dataset.dataset.disrupted[global_index], loss, (time.time()-args.tstart),psutil.virtual_memory().used/1024**3.))
+            total += target[...,args.nrecept-1:].numel()
+            for i,threshold in enumerate(args.thresholds):
+                correct[i] += accuracy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold) 
+                TP, TP_FP, TP_FN = f1_score_pieces(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
+                TPs[i] += TP; TP_FPs[i] += TP_FP; TP_FNs[i] += TP_FN
+            
+            #plot disruptive output
+            if args.plot:
+                for (i,gi) in enumerate(global_index):
+                    if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
+                        plot_output(data,output,target,weight,args,
+                                filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
+                                title='Loss: %0.4e' % float(loss))
 
-        total_loss /= len(val_loader.dataset)
-        print('Total_loss: %0.4e, rank: %d' % (total_loss,args.rank))
+        total_loss /= len(val_loader)
         if args.distributed:
-            total_loss = torch.tensor(total_loss)
-            dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
+            #print('Before all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',(time.time()-args.tstart))
+            total_loss = all_reduce(total_loss).item()
+            correct = all_reduce(correct).cpu().numpy()
+            total = all_reduce(total).item()
+            TPs = all_reduce(TPs).cpu().numpy()
+            TP_FPs = all_reduce(TP_FPs).cpu().numpy()
+            TP_FNs = all_reduce(TP_FNs).cpu().numpy()
+            total_loss = total_loss/args.world_size
+            #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
+        f1 = f1_score(TPs,TP_FPs,TP_FNs)
+        f1max = np.nanmax(f1)
+        correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set: Average loss: {:.6e}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-                    total_loss, correct, len(val_loader.dataset),
-                    100. * correct / len(val_loader.dataset)))
-        return total_loss
+            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tTime: {:.2f}\n'.format(
+                    len(val_loader.dataset),total_loss,
+                    correctmax / total, correctmax, total, f1max,(time.time()-args.tstart)))
+        return total_loss,correctmax/total, f1max
 
+def accuracy(output,target,threshold=0.5):
+    pred = output.ge(threshold)
+    return pred.eq(target.type_as(pred).view_as(pred)).float().sum()
+
+def f1_score_pieces(output,target,threshold=0.5):
+    pred = output.ge(threshold).type_as(target)
+    TP = (pred*target).float().sum()
+    TP_FP = pred.sum()
+    TP_FN = target.sum()
+    return TP, TP_FP, TP_FN 
+
+def f1_score(TP,TP_FP,TP_FN,eps=1e-10):
+    precision = TP/TP_FP+eps
+    recall = TP/TP_FN+eps
+    return 2./(1./precision + 1./recall)
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
@@ -505,22 +574,6 @@ def calc_seq_length(kernel_size,dilation_sizes,nlevel):
     return 1 + 2*(kernel_size-1)*np.sum(dilation_sizes)
 
 
-class Metric(object):
-    def __init__(self, name):
-        self.name = name
-        self.sum = torch.tensor(0.)
-        self.n = torch.tensor(0.)
-        
-    def update(self, val):
-        dist.all_reduce(val, op=dist.reduce_op.SUM)
-        self.sum += val
-        self.n += 1
-        
-    @property
-    def avg(self):
-        return self.sum / self.n
-
 if __name__ == "__main__":
     tstart = time.time()
     main()
-    #TODO: test data set, create final statistics (ROC? Printed recall/precision?)

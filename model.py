@@ -13,6 +13,5 @@ class TCN(nn.Module):
         """Inputs have to have dimension (N, C_in, L_in)"""
         y1 = self.tcn(inputs)  # input should have dimension (N, C, L)
         o = self.linear(y1.permute(0,2,1)).squeeze(dim=-1) #permute to get (N,L,C), which is what Linear expects
-        #TODO is this sigmoid applied correctly?
         #TODO: replace with BCELossWithLogits? Removes sigmoid
         return torch.sigmoid(o)
