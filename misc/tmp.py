@@ -41,7 +41,7 @@ for d in range(4,16,2)[::-1]:
      s,sp = summary(model,input_size=(input_channels,2*seq_length),batch_size=batch_size,noprint=True)
      total_sizes += [sp['total_size']]
      seq_lengths += [seq_length]
-     print d,seq_length,level,sp['total_size'], last_dilation
+     print(d,seq_length,level,sp['total_size'], last_dilation)
 
 # level = 8
 # dilation_size = 2
