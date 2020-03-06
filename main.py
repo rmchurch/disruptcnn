@@ -222,6 +222,12 @@ def main_worker(gpu,ngpus_per_node,args):
                                                             num_workers=args.workers,
                                                             undersample=args.undersample)
 
+    #save the train/val/test split, for further post-processing
+    if args.rank==0:
+        torch.save({dataset.shot_idxi,dataset.start_idxi,dataset.stop_idxi,
+                    dataset.train_inds,dataset.val_inds,dataset.test_inds},
+                    'splits.'+os.environ['SLURM_JOB_ID']+'.pth')
+
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
     if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
@@ -334,7 +340,7 @@ def main_worker(gpu,ngpus_per_node,args):
     
             #validate
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
-                valid_loss, valid_acc, valid_f1 = evaluate(val_loader, model, args)
+                valid_loss, valid_acc, valid_f1, TP, TN, FP, FN = evaluate(val_loader, model, args)
                 acc = valid_acc
                 
                 if is_writer: 
@@ -352,6 +358,8 @@ def main_worker(gpu,ngpus_per_node,args):
                         'state_dict': model.state_dict(),
                         'best_acc': best_acc,
                         'optimizer' : optimizer.state_dict(),
+                        'args': args,
+                        'confusion_matrix': [TP, TN, FP, FN],
                     }, is_best,filename='checkpoint.'+os.environ['SLURM_JOB_ID']+'.pth.tar')
             
 
@@ -429,49 +437,6 @@ def train_seq(data, target, weight, model, optimizer, args):
     return loss
 
 
-def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
-    '''Splits apart sequence into equal, overlapping subsequences of length Nsub, with overlap Nrecept
-    If accumulate=True, does accumulated gradients method to avoid large GPU memory usage
-    '''
-    if weight is None: weight = torch.ones(target.shape).cuda()
-    N = data.shape[-1] #length of entire sequence
-    num_seq_frac = (N - Nsub)/float(Nsub - Nrecept + 1)+1 #this assumes N>=Nrecept
-    num_seq = np.ceil(num_seq_frac).astype(int)
-    total_losses = 0
-    for m in range(num_seq):
-        start_idx =    m*Nsub - m*Nrecept + m
-        stop_idx = (m+1)*Nsub - m*Nrecept + m
-        if stop_idx>N: stop_idx = N
-        if ((stop_idx-start_idx)<Nrecept):
-            start_idx = stop_idx - Nrecept
-        #reverse to ensure disruptive portion never split
-        #TODO should I instead just split in half the sequence?
-        tmp = start_idx.copy()
-        start_idx = N - stop_idx
-        stop_idx = N - tmp
-
-        if (optimizer is not None) & ((m==0) or (not accumulate)):
-            optimizer.zero_grad()
-        ys = model(data[...,start_idx:stop_idx])
-        ts = target[...,start_idx:stop_idx]
-        ws = weight[...,start_idx:stop_idx]
-        #do mean of loss by hand to handle unequal sequence lengths
-        loss = F.binary_cross_entropy(ys[...,Nrecept-1:],ts[...,Nrecept-1:],weight=ws[...,Nrecept-1:],reduction='sum')/(N-Nrecept+1)
-        ####REMOVE ME
-        #if accumulate:
-        #    loss = loss/num_seq
-        ####END REMOVE ME
-        if train: loss.backward()
-        if clip is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
-        total_losses += loss.item()
-        if (optimizer is not None) & (not accumulate):
-            optimizer.step()
-    if accumulate:
-        optimizer.step()
-    return total_losses
-
-
 #for the validation and test set
 def evaluate(val_loader,model,args):
     model.eval()
@@ -479,11 +444,19 @@ def evaluate(val_loader,model,args):
     total = torch.tensor(0).cuda()
     correct = torch.zeros(args.thresholds.shape)
     TPs = torch.zeros(args.thresholds.shape)
+    TNs = torch.zeros(args.thresholds.shape)
+    FPs = torch.zeros(args.thresholds.shape)
+    FNs = torch.zeros(args.thresholds.shape)
+    #TODO Remove this test
     TP_FPs = torch.zeros(args.thresholds.shape)
     TP_FNs = torch.zeros(args.thresholds.shape)
     if 'nccl' in args.backend:
         correct = correct.cuda()
         TPs = TPs.cuda()
+        TNs = TNs.cuda()
+        FPs = FPs.cuda()
+        FNs = FNs.cuda()
+        #TODO Remove test
         TP_FPs = TP_FPs.cuda()
         TP_FNs = TP_FNs.cuda()
     with torch.no_grad(): #turns off backprop, saves computation
@@ -496,8 +469,14 @@ def evaluate(val_loader,model,args):
             total += target[...,args.nrecept-1:].numel()
             for i,threshold in enumerate(args.thresholds):
                 correct[i] += accuracy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold) 
-                TP, TP_FP, TP_FN = f1_score_pieces(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
-                TPs[i] += TP; TP_FPs[i] += TP_FP; TP_FNs[i] += TP_FN
+                TP, TN, FP, FN = confusion_matrix(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
+                #TODO: Remove this test
+                TP1, TP_FP, TP_FN = f1_score_pieces(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
+                assert TP1 == TP
+                #
+                TPs[i] += TP; TNs[i] += TN; FPs[i] += FP; FNs[i] += FN
+                #TODO Remove this test
+                TP_FPs[i] += TP_FP; TP_FNs[i] += TP_FN;
             
             #plot disruptive output
             if args.plot:
@@ -514,18 +493,35 @@ def evaluate(val_loader,model,args):
             correct = all_reduce(correct).cpu().numpy()
             total = all_reduce(total).item()
             TPs = all_reduce(TPs).cpu().numpy()
+            TNs = all_reduce(TNs).cpu().numpy()
+            FPs = all_reduce(FPs).cpu().numpy()
+            FNs = all_reduce(FNs).cpu().numpy()
             TP_FPs = all_reduce(TP_FPs).cpu().numpy()
             TP_FNs = all_reduce(TP_FNs).cpu().numpy()
             total_loss = total_loss/args.world_size
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
-        f1 = f1_score(TPs,TP_FPs,TP_FNs)
+        f1 = f1_score(TPs,TPs+FPs,TPs+FNs)
         f1max = np.nanmax(f1)
+        #TODO Remove test
+        f11 = f1_score(TPs,TP_FPs,TP_FNs)
+        f1max1 = np.nanmax(f11)
+        assert f1max==f1max1
+        #
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
             print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tTime: {:.2f}\n'.format(
                     len(val_loader.dataset),total_loss,
                     correctmax / total, correctmax, total, f1max,(time.time()-args.tstart)))
-        return total_loss,correctmax/total, f1max
+        return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs
+
+
+def confusion_matrix(output,target,threshold=0.5):
+    pred = output.ge(threshold).type_as(target)
+    TP = ((pred==1) & (target==1)).sum()
+    TN = ((pred==0) & (target==0)).sum()
+    FP = ((pred==1) & (target==0)).sum()
+    FN = ((pred==0) & (target==1)).sum()
+    return TP,TN,FP,FN
 
 def accuracy(output,target,threshold=0.5):
     pred = output.ge(threshold)
