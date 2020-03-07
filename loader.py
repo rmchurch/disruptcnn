@@ -177,7 +177,7 @@ class EceiDataset(data.Dataset):
             self.pos_weight = 1
             self.neg_weight = 1
 
-    def train_val_test_split(self,sizes=[0.8,0.1,0.1]):
+    def train_val_test_split(self,sizes=[0.8,0.1,0.1],random_seed=None):
         """Creates indices to split data into train, validation, and test datasets. 
         Stratifies to ensure each group has class structure consistent with original class balance
         sizes: Fractional size of train, validation, and test data sizes (3 element array or list)
@@ -196,10 +196,12 @@ class EceiDataset(data.Dataset):
             #split first according to shot classification
             train_shot_inds,valtest_shot_inds,train_labels,valtest_labels = train_test_split(np.arange(len(self.shot)),labels,
                                                                                         stratify=labels,
-                                                                                        test_size=np.sum(sizes[1:]))
+                                                                                        test_size=np.sum(sizes[1:]),
+                                                                                        random_state=random_seed)
             val_shot_inds, test_shot_inds, _, _ = train_test_split(valtest_shot_inds,valtest_labels,
                                                                    stratify=valtest_labels,
-                                                                   test_size=sizes[2]/np.sum(sizes[1:]))
+                                                                   test_size=sizes[2]/np.sum(sizes[1:]),
+                                                                   random_state=random_seed)
             #now get the subsequnces which belong to the shot classification split
             # (this makes sure no bleeding of shots between train/val/test splits)
             self.train_inds = np.where(np.in1d(self.shot_idxi,train_shot_inds))[0]
