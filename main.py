@@ -231,7 +231,7 @@ def main_worker(gpu,ngpus_per_node,args):
                     val_pos_inds=dataset.val_inds[val_loader.sampler.pos_used_indices],
                     val_neg_inds=dataset.val_inds[val_loader.sampler.neg_used_indices],
                     test_pos_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
-                    test_neg_inds=dataset.test_inds[dataset.disruptedi[dataset.test+inds]==0])
+                    test_neg_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
 
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
@@ -244,7 +244,7 @@ def main_worker(gpu,ngpus_per_node,args):
             args.log_interval = len(train_loader)
 
     #TODO Generalize
-    args.thresholds = np.linspace(0.0,1.0,21)
+    args.thresholds = np.linspace(0.05,0.95,19)
 
     #TODO generalize momentum?
     #TODO implement general optimizer
@@ -502,11 +502,11 @@ def evaluate(val_loader,model,args):
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
         f1 = f1_score(TPs,TPs+FPs,TPs+FNs)
         f1max = np.nanmax(f1)
-        thresholdmax = args.threshold[np.nanargmax(f1)]
+        thresholdmax = args.thresholds[np.nanargmax(f1)]
         #
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tThreshold: {thresholdmax}\tTime: {:.2f}\n'.format(
+            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tThreshold: {:.2f}\tTime: {:.2f}\n'.format(
                     len(val_loader.dataset),total_loss,
                     correctmax / total, correctmax, total, f1max,thresholdmax,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs, thresholdmax
