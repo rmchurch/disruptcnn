@@ -224,9 +224,14 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #save the train/val/test split, for further post-processing
     if args.rank==0:
-        torch.save({dataset.shot_idxi,dataset.start_idxi,dataset.stop_idxi,
-                    dataset.train_inds,dataset.val_inds,dataset.test_inds},
-                    'splits.'+os.environ['SLURM_JOB_ID']+'.pth')
+        np.savez('splits.'+os.environ['SLURM_JOB_ID']+'.npz',
+                    shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
+                    train_pos_inds=dataset.train_inds[train_loader.sampler.pos_used_indices],
+                    train_neg_inds=dataset.train_inds[train_loader.sampler.neg_used_indices],
+                    val_pos_inds=dataset.val_inds[val_loader.sampler.pos_used_indices],
+                    val_neg_inds=dataset.val_inds[val_loader.sampler.neg_used_indices],
+                    test_pos_inds=dataset.test_inds[test_loader.sampler.pos_used_indices],
+                    test_neg_inds=dataset.test_inds[test_loader.sampler.neg_used_indices])
 
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
