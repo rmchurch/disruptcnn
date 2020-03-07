@@ -244,7 +244,7 @@ def main_worker(gpu,ngpus_per_node,args):
             args.log_interval = len(train_loader)
 
     #TODO Generalize
-    args.thresholds = np.linspace(0.1,0.9,9)
+    args.thresholds = np.linspace(0.0,1.0,21)
 
     #TODO generalize momentum?
     #TODO implement general optimizer
@@ -345,7 +345,7 @@ def main_worker(gpu,ngpus_per_node,args):
     
             #validate
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
-                valid_loss, valid_acc, valid_f1, TP, TN, FP, FN = evaluate(val_loader, model, args)
+                valid_loss, valid_acc, valid_f1, TP, TN, FP, FN,threshold = evaluate(val_loader, model, args)
                 acc = valid_acc
                 
                 if is_writer: 
@@ -364,7 +364,9 @@ def main_worker(gpu,ngpus_per_node,args):
                         'best_acc': best_acc,
                         'optimizer' : optimizer.state_dict(),
                         'args': args,
-                        'confusion_matrix': [TP, TN, FP, FN],
+                        'confusion_matrix': {'TP':TP, 'TN':TN, 'FP':FP, 'FN':FN},
+                        'f1': valid_f1,
+                        'threshold': threshold,
                     }, is_best,filename='checkpoint.'+os.environ['SLURM_JOB_ID']+'.pth.tar')
             
 
@@ -452,18 +454,12 @@ def evaluate(val_loader,model,args):
     TNs = torch.zeros(args.thresholds.shape)
     FPs = torch.zeros(args.thresholds.shape)
     FNs = torch.zeros(args.thresholds.shape)
-    #TODO Remove this test
-    TP_FPs = torch.zeros(args.thresholds.shape)
-    TP_FNs = torch.zeros(args.thresholds.shape)
     if 'nccl' in args.backend:
         correct = correct.cuda()
         TPs = TPs.cuda()
         TNs = TNs.cuda()
         FPs = FPs.cuda()
         FNs = FNs.cuda()
-        #TODO Remove test
-        TP_FPs = TP_FPs.cuda()
-        TP_FNs = TP_FNs.cuda()
     with torch.no_grad(): #turns off backprop, saves computation
         for batch_idx,(data, target,global_index,weight) in enumerate(val_loader):
             data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
@@ -475,13 +471,7 @@ def evaluate(val_loader,model,args):
             for i,threshold in enumerate(args.thresholds):
                 correct[i] += accuracy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold) 
                 TP, TN, FP, FN = confusion_matrix(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
-                #TODO: Remove this test
-                TP1, TP_FP, TP_FN = f1_score_pieces(output[...,args.nrecept-1:],target[...,args.nrecept-1:],threshold=threshold)
-                assert TP1 == TP
-                #
                 TPs[i] += TP; TNs[i] += TN; FPs[i] += FP; FNs[i] += FN
-                #TODO Remove this test
-                TP_FPs[i] += TP_FP; TP_FNs[i] += TP_FN;
             
             #plot disruptive output
             if args.plot:
@@ -494,38 +484,40 @@ def evaluate(val_loader,model,args):
         total_loss /= len(val_loader)
         if args.distributed:
             #print('Before all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',(time.time()-args.tstart))
-            total_loss = all_reduce(total_loss).item()
-            correct = all_reduce(correct).cpu().numpy()
-            total = all_reduce(total).item()
-            TPs = all_reduce(TPs).cpu().numpy()
-            TNs = all_reduce(TNs).cpu().numpy()
-            FPs = all_reduce(FPs).cpu().numpy()
-            FNs = all_reduce(FNs).cpu().numpy()
-            TP_FPs = all_reduce(TP_FPs).cpu().numpy()
-            TP_FNs = all_reduce(TP_FNs).cpu().numpy()
+            total_loss = all_reduce(total_loss)
+            correct = all_reduce(correct)
+            total = all_reduce(total)
+            TPs = all_reduce(TPs)
+            TNs = all_reduce(TNs)
+            FPs = all_reduce(FPs)
+            FNs = all_reduce(FNs)
             total_loss = total_loss/args.world_size
+        total_loss = total_loss.item()
+        correct = correct.cpu().numpy()
+        total = total.item()
+        TPs = TPs.cpu().numpy()
+        TNs = TNs.cpu().numpy()
+        FPs = FPs.cpu().numpy()
+        FNs = FNs.cpu().numpy()
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
         f1 = f1_score(TPs,TPs+FPs,TPs+FNs)
         f1max = np.nanmax(f1)
-        #TODO Remove test
-        f11 = f1_score(TPs,TP_FPs,TP_FNs)
-        f1max1 = np.nanmax(f11)
-        assert f1max==f1max1
+        thresholdmax = args.threshold[np.nanargmax(f1)]
         #
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tTime: {:.2f}\n'.format(
+            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tThreshold: {thresholdmax}\tTime: {:.2f}\n'.format(
                     len(val_loader.dataset),total_loss,
-                    correctmax / total, correctmax, total, f1max,(time.time()-args.tstart)))
-        return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs
+                    correctmax / total, correctmax, total, f1max,thresholdmax,(time.time()-args.tstart)))
+        return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs, thresholdmax
 
 
 def confusion_matrix(output,target,threshold=0.5):
     pred = output.ge(threshold).type_as(target)
-    TP = ((pred==1) & (target==1)).sum()
-    TN = ((pred==0) & (target==0)).sum()
-    FP = ((pred==1) & (target==0)).sum()
-    FN = ((pred==0) & (target==1)).sum()
+    TP = ((pred==1) & (target==1)).float().sum()
+    TN = ((pred==0) & (target==0)).float().sum()
+    FP = ((pred==1) & (target==0)).float().sum()
+    FN = ((pred==0) & (target==1)).float().sum()
     return TP,TN,FP,FN
 
 def accuracy(output,target,threshold=0.5):
