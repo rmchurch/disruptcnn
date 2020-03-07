@@ -230,8 +230,8 @@ def main_worker(gpu,ngpus_per_node,args):
                     train_neg_inds=dataset.train_inds[train_loader.sampler.neg_used_indices],
                     val_pos_inds=dataset.val_inds[val_loader.sampler.pos_used_indices],
                     val_neg_inds=dataset.val_inds[val_loader.sampler.neg_used_indices],
-                    test_pos_inds=dataset.test_inds[test_loader.sampler.pos_used_indices],
-                    test_neg_inds=dataset.test_inds[test_loader.sampler.neg_used_indices])
+                    test_pos_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
+                    test_neg_inds=dataset.test_inds[dataset.disruptedi[dataset.test+inds]==0])
 
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
