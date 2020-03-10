@@ -222,17 +222,6 @@ def main_worker(gpu,ngpus_per_node,args):
                                                             num_workers=args.workers,
                                                             undersample=args.undersample)
 
-    #save the train/val/test split, for further post-processing
-    if args.rank==0:
-        np.savez('splits.'+os.environ['SLURM_JOB_ID']+'.npz',
-                    shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
-                    train_pos_inds=dataset.train_inds[train_loader.sampler.pos_used_indices],
-                    train_neg_inds=dataset.train_inds[train_loader.sampler.neg_used_indices],
-                    val_pos_inds=dataset.val_inds[val_loader.sampler.pos_used_indices],
-                    val_neg_inds=dataset.val_inds[val_loader.sampler.neg_used_indices],
-                    test_pos_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
-                    test_neg_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
-
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
     if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
@@ -274,6 +263,7 @@ def main_worker(gpu,ngpus_per_node,args):
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
+            slurm_resume_id = filter(str.isdigit,args.resume)
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             best_acc = checkpoint['best_acc']
@@ -282,10 +272,37 @@ def main_worker(gpu,ngpus_per_node,args):
             #    best_acc = best_acc.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+
+            #load same splits
+            fsplits = np.load('splits.'+slurm_resume_id+'.npz')
+            train_inds = np.concatenate((fsplits['train_pos_inds'],fsplits['train_neg_inds']))
+            val_inds = np.concatenate((fsplits['val_pos_inds'],fsplits['val_neg_inds']))
+            test_inds = np.concatenate((fsplits['test_pos_inds'],fsplits['test_neg_inds']))
+
+            #recreate the loaders with the splits from before
+            dataset.train_val_test_split(train_inds=train_inds,val_inds=val_inds,test_inds=test_inds)
+            
+            train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
+                                                        distributed=args.distributed,
+                                                        num_workers=args.workers,
+                                                        undersample=args.undersample)
             print("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+
+
+    #save the train/val/test split, for further post-processing
+    if args.rank==0:
+        np.savez('splits.'+os.environ['SLURM_JOB_ID']+'.npz',
+                    shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
+                    train_pos_inds=dataset.train_inds[train_loader.sampler.pos_used_indices],
+                    train_neg_inds=dataset.train_inds[train_loader.sampler.neg_used_indices],
+                    val_pos_inds=dataset.val_inds[val_loader.sampler.pos_used_indices],
+                    val_neg_inds=dataset.val_inds[val_loader.sampler.neg_used_indices],
+                    test_pos_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
+                    test_neg_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
+
 
     #this autotunes algo on GPU. If variable input (like before with single shot), would
     #be worse performance
