@@ -263,7 +263,7 @@ def main_worker(gpu,ngpus_per_node,args):
     if args.resume:
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
-            slurm_resume_id = filter(str.isdigit,args.resume)
+            slurm_resume_id = ''.join(filter(str.isdigit, args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             best_acc = checkpoint['best_acc']
@@ -282,10 +282,12 @@ def main_worker(gpu,ngpus_per_node,args):
             #recreate the loaders with the splits from before
             dataset.train_val_test_split(train_inds=train_inds,val_inds=val_inds,test_inds=test_inds)
             
+            #NOTE: to reuse the train_inds, etc. as defined by the splits file, the undersample has to
+            #      be turned off here
             train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                         distributed=args.distributed,
                                                         num_workers=args.workers,
-                                                        undersample=args.undersample)
+                                                        undersample=None)
             print("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
         else:
