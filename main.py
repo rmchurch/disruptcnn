@@ -102,6 +102,8 @@ parser.add_argument('--lr-finder', action='store_true',
                     help='Learning rate finder test (default: False)')
 parser.add_argument('--plot', action='store_true',
                     help='plot validation disruptive sequences (default: False)')
+parser.add_argument('--flattop-only', action='store_true',
+                    help='use only data from the current flattop (default: False)')
 
 
 
@@ -213,7 +215,8 @@ def main_worker(gpu,ngpus_per_node,args):
                           label_balance=args.label_balance,
                           normalize=(not args.no_normalize),
                           data_step=args.data_step,
-                          nsub=args.nsub,nrecept=args.nrecept)
+                          nsub=args.nsub,nrecept=args.nrecept,
+                          flattop_only=args.flattop_only)
     #create the indices for train/val/test split
     dataset.train_val_test_split()
     #create data loaders
