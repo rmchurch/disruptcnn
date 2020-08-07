@@ -105,7 +105,7 @@ parser.add_argument('--plot', action='store_true',
 
 
 
-root = '/scratch/gpfs/rmc2/ecei_d3d/'
+root = '/gpfs/alpine/proj-shared/fus131/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
 disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
@@ -118,8 +118,8 @@ def main():
     #assert (args.batch_size==1), "Currently need batch_size=1, due to variable length sequences"
     assert torch.cuda.is_available(), "GPU is currently required"
 
-    args.world_size = int(os.environ['SLURM_NTASKS'])
-    args.rank = int(os.environ['SLURM_PROCID'])
+    args.world_size = int(os.environ['OMPI_COMM_WORLD_SIZE'])
+    args.rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
     args.tstart = tstart
 
     if args.seed is not None:
@@ -147,8 +147,10 @@ def main():
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
-        #TODO Generalize for non-GPU? This requires GPU
-        args.gpu = int(os.environ['SLURM_LOCALID'])
+	#not sure if this is right, Pytorch may expect actual GPU node id, which I may need to get with JSM_GPU_ASSIGNMENTS.
+	#using LOCAL_RANK here is assuming 1 GPU per rank (jsrun --gpu_per_rs 1) 
+	#->actually, with --gpu_per_rs 1, there will only be 1 torch.cuda.device_count(), so all should be 0.
+        args.gpu = 0 #int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK']) 
         main_worker(args.gpu, ngpus_per_node, args)
 
 def main_worker(gpu,ngpus_per_node,args):
@@ -299,7 +301,7 @@ def main_worker(gpu,ngpus_per_node,args):
                     lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
                     lr_history["lr"].append(lr_epoch)
                     lr_history["loss"].append(total_loss)
-                    np.savez('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
+                    np.savez('lr_finder_'+str(int(os.environ['LSB_JOBID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
                     total_loss = 0
             else:
                 if iteration < args.iterations_warmup:
@@ -352,7 +354,7 @@ def main_worker(gpu,ngpus_per_node,args):
                         'state_dict': model.state_dict(),
                         'best_acc': best_acc,
                         'optimizer' : optimizer.state_dict(),
-                    }, is_best,filename='checkpoint.'+os.environ['SLURM_JOB_ID']+'.pth.tar')
+                    }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
             
 
     print("Main training loop ended")
@@ -369,7 +371,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
                 for (i,gi) in enumerate(global_index):
                     plot_output(data[i,...][np.newaxis,...],output[i,...][np.newaxis,...],target[i,...][np.newaxis,...],weight[i,...][np.newaxis,...],args,
-                           filename='test_output_'+str(int(os.environ['SLURM_JOB_ID']))+'_ind_'+str(global_index.item())+'.png',
+                           filename='test_output_'+str(int(os.environ['LSB_JOBID']))+'_ind_'+str(global_index.item())+'.png',
                            title='Loss: %0.4e' % loss)
 
     if args.lr_finder:
@@ -378,8 +380,8 @@ def main_worker(gpu,ngpus_per_node,args):
         plt.xscale('log')
         plt.yscale('log')
         #plt.ylim([np.array(lr_history["loss"]).min(),lr_history["loss"][0]])
-        plt.savefig('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.png')
-        np.savez('lr_finder_'+str(int(os.environ['SLURM_JOB_ID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
+        plt.savefig('lr_finder_'+str(int(os.environ['LSB_JOBID']))+'.png')
+        np.savez('lr_finder_'+str(int(os.environ['LSB_JOBID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
 
     if is_writer: writer.close()
     time.sleep(180) #allow all processes to finish
@@ -504,7 +506,7 @@ def evaluate(val_loader,model,args):
                 for (i,gi) in enumerate(global_index):
                     if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
                         plot_output(data,output,target,weight,args,
-                                filename='output_'+str(int(os.environ['SLURM_JOB_ID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
+                                filename='output_'+str(int(os.environ['LSB_JOBID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
                                 title='Loss: %0.4e' % float(loss))
 
         total_loss /= len(val_loader)
@@ -552,7 +554,7 @@ def f1_score(TP,TP_FP,TP_FN,eps=1e-10):
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.'+str(int(os.environ['SLURM_JOB_ID']))+'.pth.tar')
+        shutil.copyfile(filename, 'model_best.'+str(int(os.environ['LSB_JOBID']))+'.pth.tar')
 
 
 def create_model(args):
