@@ -218,6 +218,11 @@ class EceiDataset(data.Dataset):
     def read_data(self,index):
         shot_index = self.shot_idxi[index]
         filename = self.create_filename(shot_index)
+
+        ###TEST! TEST! TEST! just for profiling, remove!!!!!!!!!!!!
+        #X = np.random.rand(20,8,int((self.stop_idxi[index]-self.start_idxi[index])/self.data_step)).astype('float32')
+        #return X
+
         f = h5py.File(filename,'r')
         #check if weve read in offsets yet
         if np.all(self.offsets[...,shot_index]==0):

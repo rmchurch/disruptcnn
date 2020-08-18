@@ -7,6 +7,7 @@ import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.cuda.nvtx as nvtx
 import numpy as np
 import argparse
 from disruptcnn.loader import data_generator, EceiDataset
@@ -17,6 +18,10 @@ import os, psutil, shutil
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+#pyprof
+import torch.cuda.profiler as profiler
+import pyprof
+pyprof.init()
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 #model specific
@@ -105,7 +110,7 @@ parser.add_argument('--plot', action='store_true',
 
 
 
-root = '/gpfs/alpine/proj-shared/fus131/ecei_d3d/'
+root = '/gpfs/wolf/proj-shared/gen141/disruptCNN/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
 disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
@@ -290,6 +295,7 @@ def main_worker(gpu,ngpus_per_node,args):
     for epoch in range(args.start_epoch, args.epochs):
         train_loader.sampler.set_epoch(epoch)
         for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
+            nvtx.range_push("Batch "+str(batch_idx))
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
             args.iteration = iteration
@@ -356,8 +362,10 @@ def main_worker(gpu,ngpus_per_node,args):
                         'optimizer' : optimizer.state_dict(),
                     }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
             
+            nvtx.range_pop() #end batch nvtx
+            
 
-    print("Main training loop ended")
+    print("Main training loop ended: Rank: %d, Time: %0.2f" % (args.rank,(time.time()-args.tstart)))
 
 
     if (args.test>0):
@@ -408,21 +416,29 @@ def plot_output(data,output,target,weight,args,filename='output.png',title=''):
 
 def train_seq(data, target, weight, model, optimizer, args):
     '''Takes a batch sequence and trains, splitting if needed'''
+    nvtx.range_push("Copy to device (train_seq)")
     if args.cuda: 
         data, target, weight  = data.cuda(non_blocking=True), \
                                 target.cuda(non_blocking=True), \
                                 weight.cuda(non_blocking=True)
+    nvtx.range_pop()
+    nvtx.range_push("Data reorder (train_seq)")
     data = data.view(data.shape[0], args.input_channels, -1)
+    nvtx.range_pop()
     
     #No data splitting
+    nvtx.range_push("Forward pass (train_seq)")
     optimizer.zero_grad()
     output = model(data)
     #do mean of loss by hand to handle unequal sequence lengths
     loss = F.binary_cross_entropy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
+    nvtx.range_pop()
+    nvtx.range_push("Backward pass + optimizer step (train_seq)")
     loss.backward()
     if args.clip is not None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
     optimizer.step()
+    nvtx.range_pop()
 
     #split data into subsequences to process
     #train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
