@@ -1,4 +1,5 @@
 #!/usr/bin python
+from __future__ import absolute_import
 import random
 import warnings
 import torch
@@ -17,6 +18,23 @@ import os, psutil, shutil
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from mpi4py import MPI
+#import pytau
+#from pytau_deco import tau_profile, tau_timer
+import torch.cuda.nvtx as nvtx
+from nvtx_deco import nvtx_profile, nvtx_timer
+
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+rank = comm.Get_rank()
+
+import logging
+fmt = '%%(asctime)s [%d:%%(levelname)s] (%%(process)d:%%(processName)s) (%%(thread)d:%%(threadName)s) %%(message)s'%(rank)
+logging.basicConfig(level=logging.DEBUG, format=fmt)
+
+import queue
+import concurrent
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 #model specific
@@ -105,12 +123,10 @@ parser.add_argument('--plot', action='store_true',
 
 
 
-root = '/gpfs/alpine/proj-shared/fus131/ecei_d3d/'
+root = '/gpfs/wolf/proj-shared/gen141/jyc/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
 disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
-
-
 
 def main():
     args = parser.parse_args()
@@ -153,6 +169,11 @@ def main():
         args.gpu = 0 #int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK']) 
         main_worker(args.gpu, ngpus_per_node, args)
 
+def populate(prefetch_queue, train_loader):
+    for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
+        prefetch_queue.put((batch_idx, (data, target, global_index, weight)))
+
+@nvtx_profile
 def main_worker(gpu,ngpus_per_node,args):
     args.gpu = gpu
 
@@ -282,14 +303,39 @@ def main_worker(gpu,ngpus_per_node,args):
     #be worse performance
     cudnn.benchmark = True
 
+    qlist = list()
+    for epoch in range(args.start_epoch, args.epochs):
+        qlist.append(queue.Queue())
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    next_queue = qlist.pop()
+    executor.submit(populate, next_queue, train_loader)
 
     #main training loop
     steps = 0
     total_loss = 0
     best_acc = 0
     for epoch in range(args.start_epoch, args.epochs):
+        logging.debug(f"epoch: {epoch}")
+        logging.debug(f"len(train_loader): {len(train_loader)}")
+        current_queue = next_queue
+            
         train_loader.sampler.set_epoch(epoch)
-        for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
+        nvtx.range_push("Epoch " + str(epoch))
+        #for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
+        for _ in range(len(train_loader)):
+            batch_idx, (data, target, global_index, weight) = current_queue.get()
+            if ((batch_idx == len(train_loader)//2) and epoch < (args.epochs-1)):
+                logging.debug(f"Triggering  data loading for the next epoc: {epoch}")
+                next_queue = qlist.pop()
+                executor.submit(populate, next_queue, train_loader)
+
+            #x = pytau.profileTimer("batch")
+            #pytau.start(x)
+            logging.debug(f"batch_idx: {batch_idx}")
+            logging.debug(f"data: {data.shape}")
+            nvtx.range_push("Batch " + str(batch_idx))
+            #nvtx.range_pop()
+            #continue
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
             args.iteration = iteration
@@ -355,7 +401,10 @@ def main_worker(gpu,ngpus_per_node,args):
                         'best_acc': best_acc,
                         'optimizer' : optimizer.state_dict(),
                     }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
-            
+            #pytau.stop(x)
+            nvtx.range_pop()
+        nvtx.range_pop()
+
 
     print("Main training loop ended")
 
@@ -386,11 +435,13 @@ def main_worker(gpu,ngpus_per_node,args):
     if is_writer: writer.close()
     time.sleep(180) #allow all processes to finish
 
+@nvtx_profile
 def all_reduce(data,op=dist.ReduceOp.SUM):
     data = torch.tensor(data)
     dist.all_reduce(data,op=op)
     return data
 
+@nvtx_profile
 def plot_output(data,output,target,weight,args,filename='output.png',title=''):
     plt.clf()
     plt.subplot(311)
@@ -406,6 +457,7 @@ def plot_output(data,output,target,weight,args,filename='output.png',title=''):
     plt.savefig(filename)
 
 
+@nvtx_profile
 def train_seq(data, target, weight, model, optimizer, args):
     '''Takes a batch sequence and trains, splitting if needed'''
     if args.cuda: 
@@ -431,6 +483,7 @@ def train_seq(data, target, weight, model, optimizer, args):
     return loss
 
 
+@nvtx_profile
 def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=None,clip=None,accumulate=False):
     '''Splits apart sequence into equal, overlapping subsequences of length Nsub, with overlap Nrecept
     If accumulate=True, does accumulated gradients method to avoid large GPU memory usage
@@ -475,6 +528,7 @@ def process_seq(data,target,Nsub,Nrecept,model,optimizer=None,train=True,weight=
 
 
 #for the validation and test set
+@nvtx_profile
 def evaluate(val_loader,model,args):
     model.eval()
     total_loss = 0
@@ -535,10 +589,12 @@ def evaluate(val_loader,model,args):
                     correctmax / total, correctmax, total, f1max,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max
 
+@nvtx_profile
 def accuracy(output,target,threshold=0.5):
     pred = output.ge(threshold)
     return pred.eq(target.type_as(pred).view_as(pred)).float().sum()
 
+@nvtx_profile
 def f1_score_pieces(output,target,threshold=0.5):
     pred = output.ge(threshold).type_as(target)
     TP = (pred*target).float().sum()

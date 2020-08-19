@@ -7,10 +7,22 @@ from sklearn.model_selection import train_test_split
 import os
 #from torch.utils.data import SubsetRandomSampler
 from disruptcnn.sampler import StratifiedSampler
+#import pytau
+#from pytau_deco import tau_profile, tau_timer
+import torch.cuda.nvtx as nvtx
+from nvtx_deco import nvtx_profile, nvtx_timer
+
+import threading
+import logging
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+rank = comm.Get_rank()
 
 class EceiDataset(data.Dataset):
     """ECEi dataset"""
 
+    @nvtx_profile
     def __init__(self,root,clear_file,disrupt_file,
                       train=True,flattop_only=True,
                       Twarn=300,
@@ -83,6 +95,7 @@ class EceiDataset(data.Dataset):
 
         self.shot = data_all[:,0].astype(int)
         self.length = len(self.shot)
+        logging.debug("length: %d"%self.length)
 
         #create offsets placeholder
         filename = self.create_filename(0)
@@ -129,6 +142,7 @@ class EceiDataset(data.Dataset):
             #    for ind in self.test_indices:
             #        self.test_data += [self.read_data(ind)]
 
+    @nvtx_profile
     def shots2seqs(self):
         self.shot_idxi = []; self.start_idxi = []; self.stop_idxi = []; self.disrupt_idxi = []
         for s in range(len(self.shot)):
@@ -161,6 +175,7 @@ class EceiDataset(data.Dataset):
         self.disruptedi = self.disrupt_idxi>0
         self.length = len(self.shot_idxi)
 
+    @nvtx_profile
     def calc_label_weights(self,inds=None):
         """Calculated weights to use in the criterion"""
         #for now, do a constant weight on the disrupted class, to balance the unbalanced set
@@ -177,6 +192,7 @@ class EceiDataset(data.Dataset):
             self.pos_weight = 1
             self.neg_weight = 1
 
+    @nvtx_profile
     def train_val_test_split(self,sizes=[0.8,0.1,0.1]):
         """Creates indices to split data into train, validation, and test datasets. 
         Stratifies to ensure each group has class structure consistent with original class balance
@@ -207,6 +223,7 @@ class EceiDataset(data.Dataset):
             self.test_inds = np.where(np.in1d(self.shot_idxi,test_shot_inds))[0]
         self.calc_label_weights(inds=self.train_inds)
 
+    @nvtx_profile
     def create_filename(self,index):
         if self.disrupted[index]:
             shot_type='disrupt'
@@ -215,9 +232,14 @@ class EceiDataset(data.Dataset):
 
         return self.root+shot_type+'/'+str(self.shot[index])+'.h5'
 
+    @nvtx_profile
     def read_data(self,index):
         shot_index = self.shot_idxi[index]
         filename = self.create_filename(shot_index)
+        logging.debug(f"Reading: {filename} {shot_index} {index}")
+        #tm = pytau.profileTimer("reading_h5")
+        #pytau.start(tm)
+        nvtx.range_push("reading_h5")
         f = h5py.File(filename,'r')
         #check if weve read in offsets yet
         if np.all(self.offsets[...,shot_index]==0):
@@ -227,20 +249,25 @@ class EceiDataset(data.Dataset):
         if self.normalize:
             X = (X - self.normalize_mean[...,np.newaxis])/self.normalize_std[...,np.newaxis]
         f.close()
+        #pytau.stop(tm)
+        nvtx.range_pop()
         return X
 
-
+    @nvtx_profile
     def __len__(self):
         """Return total number of sequences"""
         return self.length
 
+    @nvtx_profile
     def __getitem__(self,index):
+        logging.debug(f"getitem.index: {index}")
         """Read the data from file. Reads the entire sequence from the shot file"""
         if (self.test > 0) & (hasattr(self,'test_data')):
             ind_test = np.where(self.test_indices==index)[0][0] #since the loader has inds up to len(self.shot)
             X = self.test_data[ind_test]
         else:
             X = self.read_data(index)
+        logging.debug(f"X.shape: {X.shape}")
 
         #label for clear(=0) or disrupted(=1, or weighted)
         target = np.zeros((X.shape[-1]),dtype=X.dtype)
@@ -254,6 +281,7 @@ class EceiDataset(data.Dataset):
 
 
 
+@nvtx_profile
 def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replicas=None,rank=None,undersample=None):
     """Generate the loader objects for the train,validate, and test sets
     dataset: EceiDataset object
@@ -278,6 +306,7 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
     if undersample is not None:
         inds = np.array([dataset.train_inds[i] for i in train_sampler])
         dataset.calc_label_weights(inds=inds)
+    print (inds)
 
     #create data loaders for train/val/test datasets
     train_loader = data.DataLoader(
