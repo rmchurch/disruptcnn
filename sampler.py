@@ -3,6 +3,8 @@ import torch
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import numpy as np
+#from pytau_deco import tau_profile, tau_timer
+from nvtx_deco import nvtx_profile, nvtx_timer
 
 class StratifiedSampler(DistributedSampler):
     """Sampler that restricts data loading to a subset of the dataset, 
@@ -23,6 +25,7 @@ class StratifiedSampler(DistributedSampler):
         rank (optional): Rank of the current process within num_replicas.
     """
 
+    @nvtx_profile
     def __init__(self, dataset, stratify=None, undersample=None,
                 distributed=False, num_replicas=None, rank=None):
         self.stratify = stratify
@@ -50,6 +53,7 @@ class StratifiedSampler(DistributedSampler):
             self.pos_total_size = self.pos_num_samples * self.num_replicas
             self.neg_total_size = self.neg_num_samples * self.num_replicas
 
+    @nvtx_profile
     def __iter__(self):
         # deterministically shuffle based on epoch
         g = torch.Generator()
