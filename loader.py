@@ -2,6 +2,7 @@
 
 import numpy as np
 import torch.utils.data as data
+import torch
 import h5py
 from sklearn.model_selection import train_test_split
 import os
@@ -303,3 +304,66 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
         drop_last=True)
     
     return train_loader,val_loader,test_loader
+
+
+#from AMP https://github.com/NVIDIA/apex/blob/master/examples/imagenet/main_amp.py
+class data_prefetcher():
+    def __init__(self, loader):
+        self.loader = iter(loader)
+        self.stream = torch.cuda.Stream()
+        # With Amp, it isn't necessary to manually convert data to half.
+        # if args.fp16:
+        #     self.mean = self.mean.half()
+        #     self.std = self.std.half()
+        self.preload()
+
+    def preload(self):
+        try:
+            self.next_X, self.next_target, self.next_index, self.next_weight = next(self.loader)
+        except StopIteration:
+            self.next_X = None
+            self.next_target = None
+            self.next_index = None
+            self.next_weight = None
+            return
+        # if record_stream() doesn't work, another option is to make sure device inputs are created
+        # on the main stream.
+        # self.next_input_gpu = torch.empty_like(self.next_input, device='cuda')
+        # self.next_target_gpu = torch.empty_like(self.next_target, device='cuda')
+        # Need to make sure the memory allocated for next_* is not still in use by the main stream
+        # at the time we start copying to next_*:
+        # self.stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(self.stream):
+            self.next_X = self.next_X.cuda(non_blocking=True)
+            self.next_target = self.next_target.cuda(non_blocking=True)
+            self.next_weight = self.next_weight.cuda(non_blocking=True)
+            # more code for the alternative if record_stream() doesn't work:
+            # copy_ will record the use of the pinned source tensor in this side stream.
+            # self.next_input_gpu.copy_(self.next_input, non_blocking=True)
+            # self.next_target_gpu.copy_(self.next_target, non_blocking=True)
+            # self.next_input = self.next_input_gpu
+            # self.next_target = self.next_target_gpu
+
+            # With Amp, it isn't necessary to manually convert data to half.
+            # if args.fp16:
+            #     self.next_input = self.next_input.half()
+            # else:
+            #RMC - I dont think I need this
+            #self.next_input = self.next_input.float()
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        X = self.next_X
+        target = self.next_target
+        index = self.next_index
+        weight = self.next_weight
+        if X is not None:
+            X.record_stream(torch.cuda.current_stream())
+        if target is not None:
+            target.record_stream(torch.cuda.current_stream())
+        if index is not None:
+            index.record_stream(torch.cuda.current_stream())
+        if weight is not None:
+            weight.record_stream(torch.cuda.current_stream())
+        self.preload()
+        return X, target, index, weight
