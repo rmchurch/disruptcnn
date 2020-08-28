@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.cuda.nvtx as nvtx
 import numpy as np
 import argparse
-from disruptcnn.loader import data_generator, EceiDataset
+from disruptcnn.loader import data_generator, EceiDataset, data_prefetcher
 from disruptcnn.model import TCN
 import time
 from tensorboardX import SummaryWriter
@@ -18,6 +18,7 @@ import os, psutil, shutil
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from itertools import cycle
 #pyprof
 import torch.cuda.profiler as profiler
 import pyprof
@@ -293,8 +294,27 @@ def main_worker(gpu,ngpus_per_node,args):
     total_loss = 0
     best_acc = 0
     for epoch in range(args.start_epoch, args.epochs):
+        nvtx.range_push("Epoch "+str(epoch))
         train_loader.sampler.set_epoch(epoch)
-        for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
+
+        nvtx.range_push("Init prefetch "+str(epoch))
+        if True:#epoch==0:
+            prefetcher = data_prefetcher(train_loader)
+            #prefetcher = iter(train_loader)
+            #prefetcher = cycle(train_loader)
+        #else:
+        #    prefetcher = next_prefetcher
+        nvtx.range_pop()
+        for batch_idx in range(len(train_loader)):
+            #if batch_idx==int(len(train_loader)/2):
+            #    nvtx.range_push("Init next_prefetch "+str(epoch))
+            #    next_prefetcher = data_prefetcher(train_loader)
+            #    nvtx.range_pop()
+            nvtx.range_push("Data Load "+str(batch_idx))
+            #data, target, global_index, weight = next(prefetcher)#.next()
+            data, target, global_index, weight = prefetcher.next()
+            nvtx.range_pop()
+
             nvtx.range_push("Batch "+str(batch_idx))
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
@@ -363,6 +383,7 @@ def main_worker(gpu,ngpus_per_node,args):
                     }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
             
             nvtx.range_pop() #end batch nvtx
+        nvtx.range_pop() #end epoch nvtx
             
 
     print("Main training loop ended: Rank: %d, Time: %0.2f" % (args.rank,(time.time()-args.tstart)))
