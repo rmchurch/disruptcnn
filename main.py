@@ -7,9 +7,10 @@ import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.cuda.nvtx as nvtx
 import numpy as np
 import argparse
-from disruptcnn.loader import data_generator, EceiDataset
+from disruptcnn.loader import data_generator, EceiDataset, data_prefetcher
 from disruptcnn.model import TCN
 import time
 from tensorboardX import SummaryWriter
@@ -17,6 +18,11 @@ import os, psutil, shutil
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from itertools import cycle
+#pyprof
+import torch.cuda.profiler as profiler
+import pyprof
+pyprof.init()
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 #model specific
@@ -288,8 +294,28 @@ def main_worker(gpu,ngpus_per_node,args):
     total_loss = 0
     best_acc = 0
     for epoch in range(args.start_epoch, args.epochs):
+        nvtx.range_push("Epoch "+str(epoch))
         train_loader.sampler.set_epoch(epoch)
-        for batch_idx, (data, target, global_index, weight) in enumerate(train_loader):
+
+        nvtx.range_push("Init prefetch "+str(epoch))
+        if True:#epoch==0:
+            prefetcher = data_prefetcher(train_loader)
+            #prefetcher = iter(train_loader)
+            #prefetcher = cycle(train_loader)
+        #else:
+        #    prefetcher = next_prefetcher
+        nvtx.range_pop()
+        for batch_idx in range(len(train_loader)):
+            #if batch_idx==int(len(train_loader)/2):
+            #    nvtx.range_push("Init next_prefetch "+str(epoch))
+            #    next_prefetcher = data_prefetcher(train_loader)
+            #    nvtx.range_pop()
+            nvtx.range_push("Data Load "+str(batch_idx))
+            #data, target, global_index, weight = next(prefetcher)#.next()
+            data, target, global_index, weight = prefetcher.next()
+            nvtx.range_pop()
+
+            nvtx.range_push("Batch "+str(batch_idx))
             model.train()
             iteration = epoch*len(train_loader) + batch_idx
             args.iteration = iteration
@@ -356,8 +382,11 @@ def main_worker(gpu,ngpus_per_node,args):
                         'optimizer' : optimizer.state_dict(),
                     }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
             
+            nvtx.range_pop() #end batch nvtx
+        nvtx.range_pop() #end epoch nvtx
+            
 
-    print("Main training loop ended")
+    print("Main training loop ended: Rank: %d, Time: %0.2f" % (args.rank,(time.time()-args.tstart)))
 
 
     if (args.test>0):
@@ -408,21 +437,29 @@ def plot_output(data,output,target,weight,args,filename='output.png',title=''):
 
 def train_seq(data, target, weight, model, optimizer, args):
     '''Takes a batch sequence and trains, splitting if needed'''
+    nvtx.range_push("Copy to device (train_seq)")
     if args.cuda: 
         data, target, weight  = data.cuda(non_blocking=True), \
                                 target.cuda(non_blocking=True), \
                                 weight.cuda(non_blocking=True)
+    nvtx.range_pop()
+    nvtx.range_push("Data reorder (train_seq)")
     data = data.view(data.shape[0], args.input_channels, -1)
+    nvtx.range_pop()
     
     #No data splitting
+    nvtx.range_push("Forward pass (train_seq)")
     optimizer.zero_grad()
     output = model(data)
     #do mean of loss by hand to handle unequal sequence lengths
     loss = F.binary_cross_entropy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
+    nvtx.range_pop()
+    nvtx.range_push("Backward pass + optimizer step (train_seq)")
     loss.backward()
     if args.clip is not None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
     optimizer.step()
+    nvtx.range_pop()
 
     #split data into subsequences to process
     #train_loss = process_seq(data,target,args.nsub,args.nrecept,model,
