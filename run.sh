@@ -1,8 +1,8 @@
 #!/bin/bash
-#BSUB -P gen141
+#BSUB -P fus131
 #BSUB -J test_disrupt
-#BSUB -W 01:00 #30 minutes
-##BSUB -q debug
+#BSUB -W 00:30 #30 minutes
+#BSUB -q debug
 #BSUB -nnodes 1
 #BSUB -alloc_flags maximizegpfs
 
@@ -31,18 +31,17 @@ git --git-dir=$PWD/disruptcnn/.git  show --oneline -s
 #for cProfile, to force sync CUDA ops
 #export CUDA_LAUNCH_BLOCKING=0
 
+file="file:///gpfs/alpine/scratch/rchurchi/fus131/main_${LSB_JOBID}.txt"
 export OMP_NUM_THREADS=8
-
-file="file:///gpfs/wolf/gen141/scratch/rchurchi/main_${LSB_JOBID}.txt"
 #fileprof="profile_${LSB_JOBID}_rank_${LS_JOBPID}.prof"
-#source activate torch-env
 module load ibm-wml-ce
-conda activate /gpfs/wolf/gen141/proj-shared/disruptCNN/conda-envs/torch-env
+source activate torch-env
 module load nsight-systems
-jsrun --nrs 6 --rs_per_host 6 --tasks_per_rs 1 --cpu_per_rs 6 -b packed:6 --gpu_per_rs 1 \
+#may have to specify full path to python here (on Ascent had to with nsys)
+jsrun --nrs 6 --rs_per_host 6 --tasks_per_rs 1 --cpu_per_rs 6 --gpu_per_rs 1 \
                    nsys profile -t cuda,nvtx -s cpu -o profile_%q{OMPI_COMM_WORLD_RANK} \
-		   /gpfs/wolf/gen141/proj-shared/disruptCNN/conda-envs/torch-env/bin/python -u disruptcnn/main.py --dist-url $file --backend 'nccl' \
-                    --batch-size=2 --dropout=0.1 --clip=0.3 \
+		   python -u disruptcnn/main.py --dist-url $file --backend 'nccl' \
+                    --batch-size=12 --dropout=0.1 --clip=0.3 \
                     --lr=0.5 \
                     --workers=6 \
                     --nsub 78125 \
@@ -50,8 +49,6 @@ jsrun --nrs 6 --rs_per_host 6 --tasks_per_rs 1 --cpu_per_rs 6 -b packed:6 --gpu_
                     --label-balance='const' \
                     --data-step=10 --levels=4 --nrecept=30000 --nhid=80 \
                     --undersample \
-                    --iterations-valid 600 \
-        		    --test-indices 0 1 2 3 4 5
-
+                    --iterations-valid 600
 #try to ensure the profiler and file movement finishes with everything
 sleep 60

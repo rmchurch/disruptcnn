@@ -111,7 +111,7 @@ parser.add_argument('--plot', action='store_true',
 
 
 
-root = '/gpfs/wolf/proj-shared/gen141/disruptCNN/ecei_d3d/'
+root =  '/gpfs/alpine/proj-shared/fus131/ecei_d3d/'
 data_root = root+'data/'
 clear_file = root + 'd3d_clear_ecei.final.txt'
 disrupt_file = root + 'd3d_disrupt_ecei.final.txt'
