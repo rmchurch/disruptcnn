@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 from itertools import cycle
 #pyprof
 import torch.cuda.profiler as profiler
-import pyprof
-pyprof.init()
+#import pyprof
+#pyprof.init()
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 #model specific
@@ -56,8 +56,10 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
 parser.add_argument('--epochs', type=int, default=20,
                     help='upper epoch limit (default: 20)')
+parser.add_argument('--epochs-valid', type=int, default=10,
+                    help='epoch period to run validation (default: 10)')
 parser.add_argument('--iterations-valid', type=int, const=200, nargs='?',
-                    help='iteration period to run validation(default: 1 epoch if no flag, 200 iterations if flag but no value)')
+                    help='iteration period to run validation, if set overrides epochs-valid (200 iterations if flag but no value)')
 parser.add_argument('--iterations-warmup', type=int, const=200, nargs='?',
                     help='LR warmup iterations (default: 5 epochs if no flag, 200 iterations if flag but no value)')
 parser.add_argument('--multiplier-warmup', type=float, default=8,
@@ -215,7 +217,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
     if (args.test>0) and (args.test < args.batch_size): args.batch_size = args.test
 
-    print(args)
+    if args.rank==0: print(args)
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
                           test=args.test,test_indices=args.test_indices,
                           label_balance=args.label_balance,
@@ -233,7 +235,7 @@ def main_worker(gpu,ngpus_per_node,args):
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
     if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
-    if args.iterations_valid is None: args.iterations_valid = len(train_loader)
+    if args.iterations_valid is None: args.iterations_valid = args.epochs_valid*len(train_loader)
     if args.log_interval is None: 
         if args.test==0:
             args.log_interval = args.iterations_valid
@@ -320,27 +322,6 @@ def main_worker(gpu,ngpus_per_node,args):
             iteration = epoch*len(train_loader) + batch_idx
             args.iteration = iteration
 
-            #learning rate scheduler
-            if args.lr_finder:
-                if (iteration>0) and (iteration % niter_per_interval == 0):
-                    scheduler_lrfinder.step()
-                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                    lr_history["lr"].append(lr_epoch)
-                    lr_history["loss"].append(total_loss)
-                    np.savez('lr_finder_'+str(int(os.environ['LSB_JOBID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
-                    total_loss = 0
-            else:
-                if iteration < args.iterations_warmup:
-                    scheduler_warmup.step(iteration)
-                else:
-                    #TODO change to be general outside of test
-                    if args.test==0:
-                       if (iteration>0) and (iteration % args.iterations_valid == 0):
-                            #TODO Decide if use validation loss instead
-                            scheduler_plateau.step(total_loss)
-                    else:
-                        if (iteration>0) and (iteration % len(train_loader) == 0):
-                            scheduler_plateau.step(total_loss)
 
             #train single iteration
             train_loss = train_seq(data,target,weight,model,optimizer,args)
@@ -381,6 +362,28 @@ def main_worker(gpu,ngpus_per_node,args):
                         'best_acc': best_acc,
                         'optimizer' : optimizer.state_dict(),
                     }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
+            
+            #learning rate scheduler
+            if args.lr_finder:
+                if (iteration>0) and (iteration % niter_per_interval == 0):
+                    scheduler_lrfinder.step()
+                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                    lr_history["lr"].append(lr_epoch)
+                    lr_history["loss"].append(total_loss)
+                    np.savez('lr_finder_'+str(int(os.environ['LSB_JOBID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
+                    total_loss = 0
+            else:
+                if iteration < args.iterations_warmup:
+                    scheduler_warmup.step(iteration)
+                else:
+                    #TODO change to be general outside of test
+                    if args.test==0:
+                       if (iteration>0) and (iteration % args.iterations_valid == 0):
+                            #TODO Decide if use validation loss instead
+                            scheduler_plateau.step(total_loss)
+                    else:
+                        if (iteration>0) and (iteration % len(train_loader) == 0):
+                            scheduler_plateau.step(total_loss)
             
             nvtx.range_pop() #end batch nvtx
         nvtx.range_pop() #end epoch nvtx
