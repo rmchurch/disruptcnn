@@ -19,7 +19,7 @@ class StratifiedSampler(DistributedSampler):
         undersample (optional): Fraction of neg/pos samples desired (e.g. 1.0 for equal; 0.5 for 1/3 neg, 2/3 pos, etc.)   
         distributed (optional): Stratified DistributedSampler
         num_replicas (optional): Number of processes participating in
-            distributed training.
+            distributed training. DistributedSampler will autofill to world size if not specified. 
         rank (optional): Rank of the current process within num_replicas.
     """
 
