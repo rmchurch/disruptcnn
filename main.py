@@ -278,9 +278,9 @@ def main_worker(gpu,ngpus_per_node,args):
 
             #load same splits
             fsplits = np.load('splits.'+slurm_resume_id+'.npz')
-            train_inds = np.concatenate((fsplits['train_pos_inds'],fsplits['train_neg_inds']))
-            val_inds = np.concatenate((fsplits['val_pos_inds'],fsplits['val_neg_inds']))
-            test_inds = np.concatenate((fsplits['test_pos_inds'],fsplits['test_neg_inds']))
+            train_inds = fsplits['train_inds']
+            val_inds = fsplits['val_inds']
+            test_inds = fsplits['test_inds']
 
             #recreate the loaders with the splits from before
             dataset.train_val_test_split(train_inds=train_inds,val_inds=val_inds,test_inds=test_inds)
@@ -301,12 +301,16 @@ def main_worker(gpu,ngpus_per_node,args):
     if args.rank==0:
         np.savez('splits.'+os.environ['SLURM_JOB_ID']+'.npz',
                     shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
-                    train_pos_inds=dataset.train_inds[train_loader.sampler.pos_used_indices],
-                    train_neg_inds=dataset.train_inds[train_loader.sampler.neg_used_indices],
-                    val_pos_inds=dataset.val_inds[val_loader.sampler.pos_used_indices],
-                    val_neg_inds=dataset.val_inds[val_loader.sampler.neg_used_indices],
-                    test_pos_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
-                    test_neg_inds=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
+                    disrupted=dataset.disrupted,disruptedi=dataset.disruptedi,
+                    train_inds = dataset.train_inds,val_inds = dataset.val_inds, test_inds=dataset.test_inds,
+                    train_pos_used_indices=train_loader.sampler.pos_used_indices,
+                    train_neg_used_indices=train_loader.sampler.neg_used_indices,
+                    val_pos_used_indices=val_loader.sampler.pos_used_indices,
+                    val_neg_used_indices=val_loader.sampler.neg_used_indices,
+                    test_pos_used_indices=test_loader.sampler.pos_used_indices,
+                    test_neg_used_indices=test_loader.sampler.neg_used_indices,
+                    test_pos_used_indices=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
+                    test_neg_used_indices=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
 
 
     #this autotunes algo on GPU. If variable input (like before with single shot), would
