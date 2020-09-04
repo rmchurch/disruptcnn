@@ -177,7 +177,7 @@ class EceiDataset(data.Dataset):
             self.pos_weight = 1
             self.neg_weight = 1
 
-    def train_val_test_split(self,sizes=[0.8,0.1,0.1],random_seed=None,
+    def train_val_test_split(self,sizes=[0.8,0.1,0.1],random_seed=42,
                                   train_inds=None,val_inds=None,test_inds=None):
         """Creates indices to split data into train, validation, and test datasets. 
         Stratifies to ensure each group has class structure consistent with original class balance
