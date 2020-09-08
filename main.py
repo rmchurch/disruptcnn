@@ -309,7 +309,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #save the train/val/test split, for further post-processing
     if args.rank==0:
-        np.savez('splits.'+os.environ['SLURM_JOB_ID']+'.npz',
+        np.savez('splits.'+os.environ['LSB_JOBID']+'.npz',
                     shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
                     disrupted=dataset.disrupted,disruptedi=dataset.disruptedi,
                     train_inds = dataset.train_inds,val_inds = dataset.val_inds, test_inds=dataset.test_inds,
@@ -396,6 +396,7 @@ def main_worker(gpu,ngpus_per_node,args):
                         'state_dict': model.state_dict(),
                         'best_acc': best_acc,
                         'optimizer' : optimizer.state_dict(),
+                        'args': args,
                         'confusion_matrix': {'TP':TP, 'TN':TN, 'FP':FP, 'FN':FN},
                         'f1': valid_f1,
                         'threshold': threshold,
