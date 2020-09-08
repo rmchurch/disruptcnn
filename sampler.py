@@ -43,12 +43,22 @@ class StratifiedSampler(DistributedSampler):
             self.pos_num_samples = int(math.ceil(self.Npos * 1.0 / self.num_replicas))
             if self.undersample is not None:
                 self.neg_num_samples = int(self.undersample*self.pos_num_samples)
-                self.first = True
             else:
                 self.neg_num_samples = int(math.ceil(self.Nneg * 1.0 / self.num_replicas))
             self.num_samples = self.pos_num_samples + self.neg_num_samples
             self.pos_total_size = self.pos_num_samples * self.num_replicas
             self.neg_total_size = self.neg_num_samples * self.num_replicas
+            if self.undersample is not None:
+                g = torch.Generator()
+                g.manual_seed(0)
+                neg_indices = torch.randperm(self.Nneg, generator=g)
+                self.neg_num_samples = int(self.undersample*self.pos_num_samples)
+                self.neg_indices_init = neg_indices[:self.neg_total_size]
+                self.neg_used_indices = self.neg_stratify[self.neg_indices_init]
+            else:
+                self.neg_used_indices = self.neg_stratify
+            #global indices used (fixed over epochs), for convenience in reading out
+            self.pos_used_indices = self.pos_stratify
 
     def __iter__(self):
         # deterministically shuffle based on epoch
@@ -57,10 +67,6 @@ class StratifiedSampler(DistributedSampler):
         if self.stratify is not None:
             pos_indices = torch.randperm(self.Npos, generator=g).tolist()
             if self.undersample is not None:
-                if self.first:
-                    neg_indices = torch.randperm(self.Nneg, generator=g)
-                    self.neg_indices_init = neg_indices[:self.neg_total_size]
-                    self.first = False
                 indices = torch.randperm(len(self.neg_indices_init), generator=g)
                 neg_indices = self.neg_indices_init[indices].tolist()
             else:
