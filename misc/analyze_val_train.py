@@ -49,20 +49,28 @@ def read_losses(filename):
 files = glob.glob('slurm*out')
 files.sort(key=os.path.getmtime)
 if sys.argv[1] is not None:
-    files = [sys.argv[1]]
+    files = []
+    strs = sys.argv[1:]
+    for stri in strs:
+        tmp = stri.split(',')
+        for tmpi in tmp:
+            files += glob.glob(tmpi)
 
-for i,f in enumerate(files[-2:]):
+prop_cycle = plt.rcParams['axes.prop_cycle']
+colors = prop_cycle.by_key()['color']
+
+for i,f in enumerate(files):
     #if '615' in f: continue
     lr,epochs,losses, iterations, steps, times, lrs, val_epochs, val_iterations, val_losses, val_acc, val_f1, thresholds = read_losses(f)
     plt.figure(1)
-    plt.plot(epochs,losses,label=str(lr)+','+f)
-    plt.plot(val_epochs,val_losses,'-o')
+    plt.plot(epochs,losses,label=str(lr)+','+f,color=colors[i])
+    plt.plot(val_epochs,val_losses,'-o',color=colors[i])
     plt.yscale('log')
     plt.figure(2)
-    plt.plot(epochs,lrs,label=str(lr)+','+f)
+    plt.plot(epochs,lrs,label=str(lr)+','+f,color=colors[i])
     plt.figure(3)
-    plt.plot(val_epochs,val_acc,'-o')
-    plt.plot(val_epochs,val_f1,'-d')
+    plt.plot(val_epochs,val_acc,'-o',color=colors[i])
+    plt.plot(val_epochs,val_f1,'-d',color=colors[i])
 plt.figure(1)
 plt.legend()
 plt.figure(2)
