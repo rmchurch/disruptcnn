@@ -332,6 +332,7 @@ def main_worker(gpu,ngpus_per_node,args):
     steps = 0
     total_loss = 0
     best_acc = 0
+    val_iterator = cycle(train_loader) #cycle to cache data, since small for validation
     for epoch in range(args.start_epoch, args.epochs):
         nvtx.range_push("Epoch "+str(epoch))
         train_loader.sampler.set_epoch(epoch)
@@ -380,7 +381,7 @@ def main_worker(gpu,ngpus_per_node,args):
     
             #validate
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
-                valid_loss, valid_acc, valid_f1, TP, TN, FP, FN,threshold = evaluate(val_loader, model, args)
+                valid_loss, valid_acc, valid_f1, TP, TN, FP, FN,threshold = evaluate(val_iterator, model, args, len(val_loader))
                 acc = valid_acc
                 
                 if is_writer: 
@@ -513,7 +514,7 @@ def train_seq(data, target, weight, model, optimizer, args):
 
 
 #for the validation and test set
-def evaluate(val_loader,model,args):
+def evaluate(val_iterator,model,args,len_val_loader):
     model.eval()
     total_loss = 0
     total = torch.tensor(0).cuda()
@@ -529,7 +530,8 @@ def evaluate(val_loader,model,args):
         FPs = FPs.cuda()
         FNs = FNs.cuda()
     with torch.no_grad(): #turns off backprop, saves computation
-        for batch_idx,(data, target,global_index,weight) in enumerate(val_loader):
+        for batch_idx in range(len_val_loader):
+            data, target,global_index,weight = next(val_iterator)
             data, target, weight = data.cuda(non_blocking=True), target.cuda(non_blocking=True), weight.cuda(non_blocking=True)
             data = data.view(data.shape[0], args.input_channels, -1)
             output = model(data)
@@ -549,7 +551,7 @@ def evaluate(val_loader,model,args):
                                 filename='output_'+str(int(os.environ['LSB_JOBID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
                                 title='Loss: %0.4e' % float(loss))
 
-        total_loss /= len(val_loader)
+        total_loss /= len_val_loader
         if args.distributed:
             #print('Before all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',(time.time()-args.tstart))
             total_loss = all_reduce(total_loss)
@@ -575,7 +577,7 @@ def evaluate(val_loader,model,args):
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
             print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tThreshold: {:.2f}\tTime: {:.2f}\n'.format(
-                    len(val_loader.dataset),total_loss,
+                    len_val_loader,total_loss,
                     correctmax / total, correctmax, total, f1max,thresholdmax,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs, thresholdmax
 
