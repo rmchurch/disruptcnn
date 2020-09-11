@@ -259,7 +259,13 @@ def main_worker(gpu,ngpus_per_node,args):
         scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
         #decaying learning rate scheduler for after warmup
         #TODO generalize factor?
-        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5,min_lr=args.lr/20,patience=20,cooldown=10)
+        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5,
+                                                                       min_lr=args.lr/20,
+                                                                       patience=20,
+                                                                       cooldown=10,
+                                                                       mode='max',
+                                                                       threshold=0.01,
+                                                                       verbose=True)
     else:
         lr_history = {"lr": [], "loss": []}
         ninterval = 800 #number of intervals (one interval is one learning rate value)
@@ -425,7 +431,7 @@ def main_worker(gpu,ngpus_per_node,args):
                             scheduler_plateau.step(total_loss)
                     else:
                         if (iteration>0) and (iteration % len(train_loader) == 0):
-                            scheduler_plateau.step(valid_loss)
+                            scheduler_plateau.step(valid_f1)
             
             nvtx.range_pop() #end batch nvtx
         nvtx.range_pop() #end epoch nvtx
