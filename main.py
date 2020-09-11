@@ -60,8 +60,10 @@ parser.add_argument('--epochs-valid', type=int, default=10,
                     help='epoch period to run validation (default: 10)')
 parser.add_argument('--iterations-valid', type=int, const=200, nargs='?',
                     help='iteration period to run validation, if set overrides epochs-valid (200 iterations if flag but no value)')
+parser.add_argument('--epochs-warmup', type=int, default=5,
+                    help='LR warmup epochs (default: 5 epochs)')
 parser.add_argument('--iterations-warmup', type=int, const=200, nargs='?',
-                    help='LR warmup iterations (default: 5 epochs if no flag, 200 iterations if flag but no value)')
+                    help='LR warmup iterations, if set overrides epochs-warmup (default: 200 iterations if flag but no value)')
 parser.add_argument('--multiplier-warmup', type=float, default=8,
                     help='warmup divide initial lr factor (default: 8)')
 parser.add_argument('--optim', type=str, default='SGD',
@@ -237,7 +239,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
-    if args.iterations_warmup is None: args.iterations_warmup = 5*len(train_loader)
+    if args.iterations_warmup is None: args.iterations_warmup = args.epochs_warmup*len(train_loader)
     if args.iterations_valid is None: args.iterations_valid = args.epochs_valid*len(train_loader)
     if args.log_interval is None: 
         if args.test==0:
@@ -422,7 +424,7 @@ def main_worker(gpu,ngpus_per_node,args):
                             scheduler_plateau.step(total_loss)
                     else:
                         if (iteration>0) and (iteration % len(train_loader) == 0):
-                            scheduler_plateau.step(total_loss)
+                            scheduler_plateau.step(valid_loss)
             
             nvtx.range_pop() #end batch nvtx
         nvtx.range_pop() #end epoch nvtx
