@@ -338,7 +338,7 @@ def main_worker(gpu,ngpus_per_node,args):
     steps = 0
     total_loss = 0
     best_acc = 0
-    val_iterator = cycle(train_loader) #cycle to cache data, since small for validation
+    val_iterator = cycle(val_loader) #cycle to cache data, since small for validation
     for epoch in range(args.start_epoch, args.epochs):
         nvtx.range_push("Epoch "+str(epoch))
         train_loader.sampler.set_epoch(epoch)
