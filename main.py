@@ -24,6 +24,7 @@ import torch.cuda.profiler as profiler
 #import pyprof
 #pyprof.init()
 
+
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 #model specific
 parser.add_argument('--batch-size', type=int, default=1, metavar='N',
@@ -264,8 +265,7 @@ def main_worker(gpu,ngpus_per_node,args):
                                                                        patience=20,
                                                                        cooldown=10,
                                                                        mode='max',
-                                                                       threshold=0.01,
-                                                                       verbose=True)
+                                                                       threshold=0.01)
     else:
         lr_history = {"lr": [], "loss": []}
         ninterval = 800 #number of intervals (one interval is one learning rate value)
@@ -338,6 +338,7 @@ def main_worker(gpu,ngpus_per_node,args):
     steps = 0
     total_loss = 0
     best_acc = 0
+    valid_f1 = None
     val_iterator = cycle(val_loader) #cycle to cache data, since small for validation
     for epoch in range(args.start_epoch, args.epochs):
         nvtx.range_push("Epoch "+str(epoch))
@@ -428,10 +429,10 @@ def main_worker(gpu,ngpus_per_node,args):
                     if args.test==0:
                        if (iteration>0) and (iteration % args.iterations_valid == 0):
                             #TODO Decide if use validation loss instead
-                            scheduler_plateau.step(total_loss)
+                            scheduler_plateau.step(valid_f1)
                     else:
                         if (iteration>0) and (iteration % len(train_loader) == 0):
-                            scheduler_plateau.step(valid_f1)
+                            scheduler_plateau.step(total_loss)
             
             nvtx.range_pop() #end batch nvtx
         nvtx.range_pop() #end epoch nvtx
