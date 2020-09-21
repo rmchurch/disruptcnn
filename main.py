@@ -416,7 +416,7 @@ def main_worker(gpu,ngpus_per_node,args):
                     lr_history["lr"].append(lr_epoch)
                     lr_history["loss"].append(total_loss)
                     np.savez('lr_finder_'+str(int(os.environ['LSB_JOBID']))+'.npz',lr=lr_history["lr"],loss=lr_history["loss"])
-                    total_loss = 0
+                    total_loss = 0*total_loss
             else:
                 if iteration < args.iterations_warmup:
                     scheduler_warmup.step(iteration)
@@ -449,7 +449,7 @@ def main_worker(gpu,ngpus_per_node,args):
                     print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
                                 epoch, batch_idx, len(train_loader), 100. * (batch_idx / len(train_loader)), iteration,
                                 np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
-                total_loss = 0
+                total_loss = 0*total_loss
     
             
             nvtx.range_pop() #end batch nvtx
@@ -486,7 +486,7 @@ def main_worker(gpu,ngpus_per_node,args):
     time.sleep(180) #allow all processes to finish
 
 def all_reduce(data,op=dist.ReduceOp.SUM):
-    data = torch.tensor(data)
+    data = torch.as_tensor(data)
     dist.all_reduce(data,op=op)
     return data
 
