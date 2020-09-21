@@ -32,7 +32,7 @@ def read_losses(filename):
                     val_acc += [float(line.split('Accuracy:')[1].split()[1][1:3])/100.]
                 else:
                     val_acc += [float(line.split('Accuracy:')[1].split()[0])]
-                val_index += [len(epochs)]
+                val_index += [len(epochs)-1]
                 val_losses += [float(line.split('Average loss:')[1].split()[0])]
                 val_f1 += [float(line.split('F1:')[1].split()[0])]
                 if 'Threshold' in line:
@@ -46,33 +46,34 @@ def read_losses(filename):
     return lr,epochs,losses, iterations, steps, times, lrs, \
            val_epochs, val_iterations, val_losses, val_acc, val_f1, thresholds
 
-files = glob.glob('slurm*out')
-files.sort(key=os.path.getmtime)
-if sys.argv[1] is not None:
-    files = []
-    strs = sys.argv[1:]
-    for stri in strs:
-        tmp = stri.split(',')
-        for tmpi in tmp:
-            files += glob.glob(tmpi)
+if __name__=="__main__":
+    files = glob.glob('slurm*out')
+    files.sort(key=os.path.getmtime)
+    if sys.argv[1] is not None:
+        files = []
+        strs = sys.argv[1:]
+        for stri in strs:
+            tmp = stri.split(',')
+            for tmpi in tmp:
+                files += glob.glob(tmpi)
 
-prop_cycle = plt.rcParams['axes.prop_cycle']
-colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams['axes.prop_cycle']
+    colors = prop_cycle.by_key()['color']
 
-for i,f in enumerate(files):
-    #if '615' in f: continue
-    lr,epochs,losses, iterations, steps, times, lrs, val_epochs, val_iterations, val_losses, val_acc, val_f1, thresholds = read_losses(f)
-    plt.figure(1)
-    plt.plot(epochs,losses,label=str(lr)+','+f,color=colors[i])
-    plt.plot(val_epochs,val_losses,'-o',color=colors[i])
-    plt.yscale('log')
-    plt.figure(2)
-    plt.plot(epochs,lrs,label=str(lr)+','+f,color=colors[i])
-    plt.figure(3)
-    plt.plot(val_epochs,val_acc,'-o',color=colors[i])
-    plt.plot(val_epochs,val_f1,'-d',color=colors[i])
-plt.figure(1)
-plt.legend()
-plt.figure(2)
-plt.legend()
+    for i,f in enumerate(files):
+        #if '615' in f: continue
+        lr,epochs,losses, iterations, steps, times, lrs, val_epochs, val_iterations, val_losses, val_acc, val_f1, thresholds = read_losses(f)
+        if i==0:
+            plt.figure(1,figsize=[13,4.5]); plt.clf()
+            ax1 = plt.subplot(131)
+            ax2 = plt.subplot(132,sharex=ax1)
+            ax3 = plt.subplot(133,sharex=ax1)
+            plt.tight_layout()
+        ax1.plot(epochs,losses,label=str(lr)+','+f,color=colors[i])
+        ax1.plot(val_epochs,val_losses,'-o',color=colors[i])
+        ax1.set_yscale('log')
+        ax2.plot(val_epochs,val_acc,'-o',color=colors[i],)
+        ax2.plot(val_epochs,val_f1,'-d',color=colors[i])
+        ax3.plot(epochs,lrs,label=str(lr)+','+f,color=colors[i])
+    plt.legend()
 
