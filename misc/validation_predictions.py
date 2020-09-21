@@ -63,7 +63,7 @@ def calc_predictions(model_file,splits_file):
     shot_idxi = fsplits['shot_idxi']
     val_inds = fsplits['val_inds']
     
-    shots_val = shot[val_inds]
+    shots_val = np.unique(shot[shot_idxi[val_inds]])
     shots_val.sort()
 
     #create dataset object for normalizations

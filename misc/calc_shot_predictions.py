@@ -135,7 +135,12 @@ class Objective(object):
             plt.plot(2*[t[int(self.stop_idx[index]-self.start_idx[index])]],[0,1],'r-')
         if disruptionind>0:
             plt.plot(2*[t[int(disruptionind)]],[0,1],'k--')
-        plt.title("Shot: %d, Disrupted: %s, disruptionind: %d" % (self.shots[index],str(self.disrupted[index]),disruptionind))
+        if ((self.disrupted[index]) ^ (disruptionind>-1)):
+            color = 'red'
+        else:
+            color = 'green'
+        plt.title("Shot: %d, Disrupted: %s, disruptionind: %d" % (self.shots[index],str(self.disrupted[index]),disruptionind),color=color)
+        plt.ylim([-0.1,1.1])
 
     def warning_times(self,plot=False):
         self.Ndisrupt = np.sum(self.disrupted)
