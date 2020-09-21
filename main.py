@@ -226,7 +226,7 @@ def main_worker(gpu,ngpus_per_node,args):
 
     if (args.test>0) and (args.test < args.batch_size): args.batch_size = args.test
 
-    print(args)
+    if args.rank==0: print(args)
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
                           test=args.test,test_indices=args.test_indices,
                           label_balance=args.label_balance,
