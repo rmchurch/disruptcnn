@@ -53,6 +53,8 @@ parser.add_argument('--nsub', type=int, default=5000000,
 #learning specific
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
+parser.add_argument('--lr-step-metric', type=str, default='valid_f1',
+                    help='Metric to use with ReduceLROnPlateau (default: valid_f1)')
 parser.add_argument('--weight-decay', type=float, default=0.0,
                     help='weight-decay, acts as L2 regularizer (default: 0.0)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -262,11 +264,15 @@ def main_worker(gpu,ngpus_per_node,args):
         scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
         #decaying learning rate scheduler for after warmup
         #TODO generalize factor?
+        if 'f1' in args.lr_step_metric:
+            mode = 'max'
+        else:
+            mode = 'min'
         scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5,
                                                                        min_lr=args.lr/20,
                                                                        patience=20,
                                                                        cooldown=10,
-                                                                       mode='max',
+                                                                       mode=mode,
                                                                        threshold=0.01)
     else:
         lr_history = {"lr": [], "loss": []}
@@ -376,19 +382,7 @@ def main_worker(gpu,ngpus_per_node,args):
             steps += data.shape[0]*data.shape[-1]
             total_loss += train_loss
 
-            #log training 
-            if batch_idx % args.log_interval == 0:
-                if args.distributed: 
-                    total_loss = all_reduce(total_loss).item()
-                    total_loss = total_loss/args.world_size
-                if args.rank==0:
-                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
-                    print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
-                                epoch, batch_idx, len(train_loader), 100. * (batch_idx / len(train_loader)), iteration,
-                                np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
-                total_loss = 0
-    
-            #validate
+            #validation
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
                 valid_loss, valid_acc, valid_f1, TP, TN, FP, FN,threshold = evaluate(val_iterator, model, args, len(val_loader))
                 acc = valid_acc
@@ -430,11 +424,33 @@ def main_worker(gpu,ngpus_per_node,args):
                     #TODO change to be general outside of test
                     if args.test==0:
                        if (iteration>0) and (iteration % args.iterations_valid == 0):
-                            #TODO Decide if use validation loss instead
-                            scheduler_plateau.step(valid_f1)
+                            if 'valid_f1' in args.lr_step_metric:
+                                metric = valid_f1
+                            elif 'valid_loss' in args.lr_step_metric:
+                                metric = valid_loss
+                            else:
+                                #validation metrics are already reduced across world_size, train_loss not
+                                if args.distributed: 
+                                    total_loss = all_reduce(total_loss).item()
+                                    total_loss = total_loss/args.world_size
+                                metric = total_loss
+                            scheduler_plateau.step(metric)
                     else:
                         if (iteration>0) and (iteration % len(train_loader) == 0):
                             scheduler_plateau.step(total_loss)
+            
+            #log training 
+            if batch_idx % args.log_interval == 0:
+                if args.distributed: 
+                    total_loss = all_reduce(total_loss).item()
+                    total_loss = total_loss/args.world_size
+                if args.rank==0:
+                    lr_epoch = [ group['lr'] for group in optimizer.param_groups ][0]
+                    print('Train Epoch: %d [%d/%d (%0.2f%%)]\tIteration: %d\tDisrupted: %0.4f\tLoss: %0.6e\tSteps: %d\tTime: %0.2f\tMem: %0.1f\tLR: %0.2e' % (
+                                epoch, batch_idx, len(train_loader), 100. * (batch_idx / len(train_loader)), iteration,
+                                np.sum(train_loader.dataset.dataset.disruptedi[global_index])/global_index.size(), total_loss/args.log_interval, steps,(time.time()-args.tstart),psutil.virtual_memory().used/1024**3.,lr_epoch))
+                total_loss = 0
+    
             
             nvtx.range_pop() #end batch nvtx
         nvtx.range_pop() #end epoch nvtx
