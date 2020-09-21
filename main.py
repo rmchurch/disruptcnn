@@ -53,6 +53,8 @@ parser.add_argument('--nsub', type=int, default=5000000,
 #learning specific
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
+parser.add_argument('--weight-decay', type=float, default=0.0,
+                    help='weight-decay, acts as L2 regularizer (default: 0.0)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
 parser.add_argument('--epochs', type=int, default=20,
@@ -254,7 +256,7 @@ def main_worker(gpu,ngpus_per_node,args):
     #TODO generalize momentum?
     #TODO implement general optimizer
     if not args.lr_finder:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=0.1)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
         #gradual linear increasing learning rate for warmup
         lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*iteration+1./args.multiplier_warmup
         scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
