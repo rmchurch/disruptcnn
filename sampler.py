@@ -93,8 +93,13 @@ class StratifiedSampler(DistributedSampler):
             nfact = math.ceil(len(neg_indices)/len(pos_indices))
             indices = []
             for i,j in enumerate(range(0,len(neg_indices),nfact)):
-                indices.append(pos_indices[i])
-                indices.extend(neg_indices[j:j+nfact])
+                if self.rank % 2: #this ensures local batch_size=1 still gives balanced global sets
+                    indices.append(pos_indices[i])
+                    indices.extend(neg_indices[j:j+nfact])
+                else:
+                    indices.extend(neg_indices[j:j+nfact])
+                    indices.append(pos_indices[i])
+
 
             return iter(indices)
         else:
