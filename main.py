@@ -79,6 +79,10 @@ parser.add_argument('--accumulate', action='store_true',
                     help='accumulate gradients over entire batch, i.e. shot (default: False)')
 parser.add_argument('--undersample', type=float, nargs='?',const=1.0,
                     help='fraction of non-disruptive/disruptive subsequences (default: None if no flag, 1.0 if flag but no value)')
+parser.add_argument('--oversample', type=int, nargs='?',const=5,
+                    help='Duplicate pos samples, match with equal neg samples (default: None if no flag, 5 if flag but no value) 
+                               (e.g. if total N = Npos + Nneg, and Nneg/Npos = 10, oversample=2 will set the # positive samples as 2*Npos, and
+                               # negative samples as 2*Npos (i.e. 5x smaller than available) )')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
@@ -239,7 +243,8 @@ def main_worker(gpu,ngpus_per_node,args):
     train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                             distributed=args.distributed,
                                                             num_workers=args.workers,
-                                                            undersample=args.undersample)
+                                                            undersample=args.undersample,
+                                                            oversample=args.oversample)
 
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
@@ -312,7 +317,7 @@ def main_worker(gpu,ngpus_per_node,args):
             train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                         distributed=args.distributed,
                                                         num_workers=args.workers,
-                                                        undersample=None)
+                                                        undersample=None, oversample=None)
             print("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
         else:
