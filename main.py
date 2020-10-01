@@ -80,9 +80,9 @@ parser.add_argument('--accumulate', action='store_true',
 parser.add_argument('--undersample', type=float, nargs='?',const=1.0,
                     help='fraction of non-disruptive/disruptive subsequences (default: None if no flag, 1.0 if flag but no value)')
 parser.add_argument('--oversample', type=int, nargs='?',const=5,
-                    help='Duplicate pos samples, match with equal neg samples (default: None if no flag, 5 if flag but no value) 
+                    help='''Duplicate pos samples, match with equal neg samples (default: None if no flag, 5 if flag but no value) 
                                (e.g. if total N = Npos + Nneg, and Nneg/Npos = 10, oversample=2 will set the # positive samples as 2*Npos, and
-                               # negative samples as 2*Npos (i.e. 5x smaller than available) )')
+                               # negative samples as 2*Npos (i.e. 5x smaller than available) )''')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
