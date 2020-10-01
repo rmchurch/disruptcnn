@@ -331,8 +331,8 @@ def main_worker(gpu,ngpus_per_node,args):
             val_pos_used_indices=val_loader.sampler.pos_used_indices
             val_neg_used_indices=val_loader.sampler.neg_used_indices
         else:
-            val_pos_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==1],
-            val_neg_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==0])
+            val_pos_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==1]
+            val_neg_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==0]
 
         np.savez('splits.'+os.environ['LSB_JOBID']+'.npz',
                     shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
