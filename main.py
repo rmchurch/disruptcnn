@@ -327,14 +327,21 @@ def main_worker(gpu,ngpus_per_node,args):
     #save the train/val/test split, for further post-processing
     if args.rank==0:
         print(args)
+        if getattr(val_loader,'pos_used_indices',None) is not None:
+            val_pos_used_indices=val_loader.sampler.pos_used_indices
+            val_neg_used_indices=val_loader.sampler.neg_used_indices
+        else:
+            val_pos_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==1],
+            val_neg_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==0])
+
         np.savez('splits.'+os.environ['LSB_JOBID']+'.npz',
                     shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
                     disrupted=dataset.disrupted,disruptedi=dataset.disruptedi,
                     train_inds = dataset.train_inds,val_inds = dataset.val_inds, test_inds=dataset.test_inds,
                     train_pos_used_indices=train_loader.sampler.pos_used_indices,
                     train_neg_used_indices=train_loader.sampler.neg_used_indices,
-                    val_pos_used_indices=val_loader.sampler.pos_used_indices,
-                    val_neg_used_indices=val_loader.sampler.neg_used_indices,
+                    val_pos_used_indices=val_pos_used_indices,
+                    val_neg_used_indices=val_neg_used_indices,
                     test_pos_used_indices=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
                     test_neg_used_indices=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
 
