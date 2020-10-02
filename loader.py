@@ -289,7 +289,7 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
                                                     distributed=distributed,
                                                     undersample=undersample,oversample=oversample)
     val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,
-                                                distributed=distributed)
+                                                distributed=distributed,extend=False)
                                                 #stratify=dataset.disruptedi[dataset.val_inds],
                                                 #undersample=undersample,oversample=oversample) #need to decide if validation should have typical distributin instead of under/over sample
    

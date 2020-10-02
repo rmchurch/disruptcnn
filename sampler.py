@@ -27,7 +27,7 @@ class StratifiedSampler(DistributedSampler):
     """
 
     def __init__(self, dataset, stratify=None, undersample=None, oversample=None,
-                distributed=False, num_replicas=None, rank=None):
+                distributed=False, num_replicas=None, rank=None, extend=True):
         self.stratify = stratify
         self.undersample = undersample
         self.oversample = oversample
@@ -36,6 +36,7 @@ class StratifiedSampler(DistributedSampler):
             DistributedSampler.__init__(self,dataset, num_replicas=num_replicas, rank=rank)
         else:
             #TODO need to create ither variables defined in distriburedsampler when stratify off
+            self.dataset = dataset
             self.num_replicas = 1
             self.rank = 0
             self.epoch = 0
@@ -79,6 +80,14 @@ class StratifiedSampler(DistributedSampler):
                 #global indices used (fixed over epochs), for convenience in reading out
                 self.neg_used_indices = self.neg_stratify
                 self.pos_used_indices = self.pos_stratify
+        else:
+            self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+            if extend:
+                self.total_size = self.num_samples * self.num_replicas
+            else:
+                self.total_size = len(self.dataset)
+                tmp = range(self.total_size)
+                self.num_samples = len(tmp[self.rank:self.total_size:self.num_replicas])
 
     def __iter__(self):
         # deterministically shuffle based on epoch
