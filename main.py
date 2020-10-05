@@ -622,15 +622,17 @@ def evaluate(val_iterator,model,args,len_val_loader):
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
         f1 = f1_score(TPs,TPs+FPs,TPs+FNs)
         f1max = np.nanmax(f1)
+        mcc = mcc_score(TP,FP,TN,FN)
+        mccmax = np.nanmax(mcc)
         thresholdmax = args.thresholds[np.nanargmax(f1)]
         tpr = (TPs/(TPs+FNs))[np.nanargmax(f1)]
         fpr = (TNs/(TNs+FPs))[np.nanargmax(f1)]
         #
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tTPR: {:.6e}\tFPR: {:.6e}\tF1: {:.6e}\tThreshold: {:.2f}\tTime: {:.2f}\n'.format(
+            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tTPR: {:.6e}\tFPR: {:.6e}\tF1: {:.6e}\tMCC: {:.6e}\tThreshold: {:.2f}\tTime: {:.2f}\n'.format(
                     len_val_loader,total_loss,
-                    correctmax / total, correctmax, total, tpr, fpr, f1max,thresholdmax,(time.time()-args.tstart)))
+                    correctmax / total, correctmax, total, tpr, fpr, f1max,mccmax,thresholdmax,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs, thresholdmax
 
 
@@ -657,6 +659,13 @@ def f1_score(TP,TP_FP,TP_FN,eps=1e-10):
     precision = TP/TP_FP+eps
     recall = TP/TP_FN+eps
     return 2./(1./precision + 1./recall)
+
+def mcc_score(TP,FP,TN,FN):
+    denom = np.sqrt((TP+FP)*(TP+FN)*(TN+FP)*(TN+FN))
+    if np.any(denom==0): 
+        denom[denom==0] = 1 
+    mcc = ((TP*TN) - (FP*FN))/denom
+    return mcc
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
