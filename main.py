@@ -622,7 +622,7 @@ def evaluate(val_iterator,model,args,len_val_loader):
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
         f1 = f1_score(TPs,TPs+FPs,TPs+FNs)
         f1max = np.nanmax(f1)
-        mcc = mcc_score(TP,FP,TN,FN)
+        mcc = mcc_score(TPs,FPs,TNs,FNs)
         mccmax = np.nanmax(mcc)
         thresholdmax = args.thresholds[np.nanargmax(f1)]
         tpr = (TPs/(TPs+FNs))[np.nanargmax(f1)]
