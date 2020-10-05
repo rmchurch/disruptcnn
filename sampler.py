@@ -53,8 +53,11 @@ class StratifiedSampler(DistributedSampler):
             if self.undersample is not None:
                 self.neg_num_samples = int(self.undersample*self.pos_num_samples)
             elif self.oversample is not None:
-                self.pos_num_samples = int(self.oversample*self.pos_num_samples)
-                assert self.pos_num_samples <= self.neg_num_samples, 'ERROR: oversampling too high, more than available'
+                if (self.oversample*self.Npos) > self.Nneg: 
+                    self.oversample = int(math.floor(self.Nneg/self.Npos))
+                    if self.rank==0:
+                        print('WARNING: oversampling too high, more than neg available, setting to oversample=%d' % self.oversample)
+                self.pos_num_samples = int(math.ceil(self.oversample*self.Npos * 1.0 / self.num_replicas))
                 self.neg_num_samples = self.pos_num_samples
             self.num_samples = self.pos_num_samples + self.neg_num_samples
             self.pos_total_size = self.pos_num_samples * self.num_replicas
