@@ -55,7 +55,7 @@ parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
 parser.add_argument('--lr-step-metric', type=str, default='valid_f1',
                     help='Metric to use with ReduceLROnPlateau (default: valid_f1)')
-parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',
+parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',default=0.0,
                     help='weight-decay, acts as L2 regularizer (default: None if no floag, 1e-4 if flag but no value)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
