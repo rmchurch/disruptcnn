@@ -296,7 +296,7 @@ def main_worker(gpu,ngpus_per_node,args):
             slurm_resume_id = ''.join(filter(str.isdigit, args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
+            best_f1 = checkpoint['best_f1']
             #if args.gpu is not None:
             #    # best_acc may be from a checkpoint from a different GPU
             #    best_acc = best_acc.to(args.gpu)
@@ -355,7 +355,7 @@ def main_worker(gpu,ngpus_per_node,args):
     steps = 0
     total_loss_lr = 0
     total_loss_log = 0
-    best_acc = 0
+    best_f1 = 0
     valid_f1 = None
     val_iterator = cycle(val_loader) #cycle to cache data, since small for validation
     for epoch in range(args.start_epoch, args.epochs):
@@ -397,22 +397,21 @@ def main_worker(gpu,ngpus_per_node,args):
             #validation
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
                 valid_loss, valid_acc, valid_f1, TP, TN, FP, FN,threshold = evaluate(val_iterator, model, args, len(val_loader))
-                acc = valid_acc
                 
                 if is_writer: 
                     writer.add_scalar('valid_loss',valid_loss,iteration)
                     writer.add_scalar('valid_acc',valid_acc,iteration)
                     writer.add_scalar('valid_f1',valid_f1,iteration)
-                # remember best acc and save checkpoint
-                is_best = acc > best_acc
-                best_acc = max(acc, best_acc)
+                # remember best f1 and save checkpoint
+                is_best = valid_f1 > best_f1
+                best_f1 = max(valid_f1, best_f1)
                  
                 if (not args.multiprocessing_distributed and args.rank==0) or \
                    (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     save_checkpoint({
                         'epoch': epoch + 1,
                         'state_dict': model.state_dict(),
-                        'best_acc': best_acc,
+                        'best_f1': best_f1,
                         'optimizer' : optimizer.state_dict(),
                         'args': args,
                         'confusion_matrix': {'TP':TP, 'TN':TN, 'FP':FP, 'FN':FN},
