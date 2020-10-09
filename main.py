@@ -55,6 +55,12 @@ parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
 parser.add_argument('--lr-step-metric', type=str, default='valid_f1',
                     help='Metric to use with ReduceLROnPlateau (default: valid_f1)')
+parser.add_argument('--lr-factor', type=float, default=0.5,
+                    help='learning rate reduction factor when change with ReduceLROnPlateau (default: 0.5)')
+parser.add_argument('--lr-patience', type=int, default=20,
+                    help='learning rate wait period before change with ReduceLROnPlateau (default: 20)')
+parser.add_argument('--lr-cooldown', type=int, default=10,
+                    help='learning rate wait period after change with ReduceLROnPlateau (default: 10)')
 parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',default=0.0,
                     help='weight-decay, acts as L2 regularizer (default: None if no floag, 1e-4 if flag but no value)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -269,10 +275,10 @@ def main_worker(gpu,ngpus_per_node,args):
             mode = 'max'
         else:
             mode = 'min'
-        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5,
+        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=args.lr_factor,
                                                                        min_lr=args.lr/20,
-                                                                       patience=20,
-                                                                       cooldown=10,
+                                                                       patience=args.lr_patience,
+                                                                       cooldown=args.lr_cooldown,
                                                                        mode=mode,
                                                                        threshold=0.01)
     else:
