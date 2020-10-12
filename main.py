@@ -267,7 +267,7 @@ def main_worker(gpu,ngpus_per_node,args):
     if not args.lr_finder:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
         #gradual linear increasing learning rate for warmup
-        lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*iteration+1./args.multiplier_warmup
+        lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*(iteration+1) + 1./args.multiplier_warmup
         scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
         #decaying learning rate scheduler for after warmup
         #TODO generalize factor?
