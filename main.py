@@ -362,7 +362,7 @@ def main_worker(gpu,ngpus_per_node,args):
     total_loss_lr = 0
     total_loss_log = 0
     best_f1 = 0
-    valid_f1 = None
+    valid_f1 = 0
     val_iterator = cycle(val_loader) #cycle to cache data, since small for validation
     for epoch in range(args.start_epoch, args.epochs):
         nvtx.range_push("Epoch "+str(epoch))
