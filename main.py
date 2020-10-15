@@ -276,7 +276,7 @@ def main_worker(gpu,ngpus_per_node,args):
         else:
             mode = 'min'
         scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=args.lr_factor,
-                                                                       min_lr=args.lr/20,
+                                                                       min_lr=args.lr*args.lr_factor**4,
                                                                        patience=args.lr_patience,
                                                                        cooldown=args.lr_cooldown,
                                                                        mode=mode,
