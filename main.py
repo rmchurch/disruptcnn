@@ -53,6 +53,8 @@ parser.add_argument('--nsub', type=int, default=5000000,
 #learning specific
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
+parser.add_argument('--lr-scheduler', type=str, default='plateau',
+                    help='Type of learning rate scheduler (default: "plateau", other valid option "step")')
 parser.add_argument('--lr-step-metric', type=str, default='valid_f1',
                     help='Metric to use with ReduceLROnPlateau (default: valid_f1)')
 parser.add_argument('--lr-factor', type=float, default=0.5,
@@ -61,6 +63,9 @@ parser.add_argument('--lr-patience', type=int, default=20,
                     help='learning rate wait period before change with ReduceLROnPlateau (default: 20)')
 parser.add_argument('--lr-cooldown', type=int, default=10,
                     help='learning rate wait period after change with ReduceLROnPlateau (default: 10)')
+parser.add_argument('--lr-epochs', default=[100,150,200,250], nargs='*',type=int,
+                    help='list of epochs which to decay by lr-factor, used with "step" option of lr-scheduler (MultiStepLR) (default: [100,150,200,250])')
+
 parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',default=0.0,
                     help='weight-decay, acts as L2 regularizer (default: None if no floag, 1e-4 if flag but no value)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -275,12 +280,17 @@ def main_worker(gpu,ngpus_per_node,args):
             mode = 'max'
         else:
             mode = 'min'
-        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=args.lr_factor,
+        if 'plateau' in args.lr_scheduler:
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=args.lr_factor,
                                                                        min_lr=args.lr*args.lr_factor**4,
                                                                        patience=args.lr_patience,
                                                                        cooldown=args.lr_cooldown,
                                                                        mode=mode,
                                                                        threshold=0.01)
+        else:
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                [lr_epoch*len(train_loader) for lr_epoch in args.lr_epochs],
+                                gamma=args.lr_factor)
     else:
         lr_history = {"lr": [], "loss": []}
         ninterval = 800 #number of intervals (one interval is one learning rate value)
@@ -462,25 +472,28 @@ def main_worker(gpu,ngpus_per_node,args):
                 else:
                     #TODO change to be general outside of test
                     if args.test==0:
-                        if 'valid' in args.lr_step_metric:
-                            if (iteration>0) and (iteration % args.iterations_valid == (args.iterations_valid-1)):
-                                if 'valid_f1' in args.lr_step_metric:
-                                    metric = valid_f1
-                                else: #'valid_loss'
-                                    metric = valid_loss
-                                scheduler_plateau.step(metric)
+                        if 'plateau' in args.lr_scheduler:
+                            if 'valid' in args.lr_step_metric:
+                                if (iteration>0) and (iteration % args.iterations_valid == (args.iterations_valid-1)):
+                                    if 'valid_f1' in args.lr_step_metric:
+                                        metric = valid_f1
+                                    else: #'valid_loss'
+                                        metric = valid_loss
+                                    scheduler.step(metric)
+                            else:
+                                if (iteration>0) and (iteration % len(train_loader) == 0):
+                                    #validation metrics are already reduced across world_size, train_loss not
+                                    if args.distributed: 
+                                        total_loss_lr = all_reduce(total_loss_lr).item()
+                                        total_loss_lr = total_loss_lr/args.world_size/args.iterations_valid
+                                    metric = total_loss_lr
+                                    scheduler.step(metric)
+                                    total_loss_lr = 0
                         else:
-                            if (iteration>0) and (iteration % len(train_loader) == 0):
-                                #validation metrics are already reduced across world_size, train_loss not
-                                if args.distributed: 
-                                    total_loss_lr = all_reduce(total_loss_lr).item()
-                                    total_loss_lr = total_loss_lr/args.world_size/args.iterations_valid
-                                metric = total_loss_lr
-                                scheduler_plateau.step(metric)
-                                total_loss_lr = 0
+                            scheduler.step()
                     else:
                         if (iteration>0) and (iteration % len(train_loader) == 0):
-                            scheduler_plateau.step(total_loss_lr)
+                            scheduler.step(total_loss_lr)
     
             
             nvtx.range_pop() #end batch nvtx
