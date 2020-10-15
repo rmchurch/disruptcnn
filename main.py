@@ -335,6 +335,10 @@ def main_worker(gpu,ngpus_per_node,args):
                                                         distributed=args.distributed,
                                                         num_workers=args.workers,
                                                         undersample=None, oversample=args.oversample)
+            #fast-forward scheduler to be at right epoch
+            if 'step' in args.lr_scheduler:
+                for i in range(args.start_epoch*len(train_loader)): scheduler.step()
+
             print("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
         else:
