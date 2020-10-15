@@ -320,10 +320,11 @@ def main_worker(gpu,ngpus_per_node,args):
             
             #NOTE: to reuse the train_inds, etc. as defined by the splits file, the undersample has to
             #      be turned off here
+            #      But oversample has to be on if on, otherwise uses dataset as is
             train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                         distributed=args.distributed,
                                                         num_workers=args.workers,
-                                                        undersample=None, oversample=None)
+                                                        undersample=None, oversample=args.oversample)
             print("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
         else:
