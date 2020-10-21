@@ -19,6 +19,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from itertools import cycle
+#apex
+import apex
+from apex import amp
 #pyprof
 import torch.cuda.profiler as profiler
 #import pyprof
@@ -53,10 +56,21 @@ parser.add_argument('--nsub', type=int, default=5000000,
 #learning specific
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
+parser.add_argument('--lr-scheduler', type=str, default='plateau',
+                    help='Type of learning rate scheduler (default: "plateau", other valid option "step")')
 parser.add_argument('--lr-step-metric', type=str, default='valid_f1',
                     help='Metric to use with ReduceLROnPlateau (default: valid_f1)')
-parser.add_argument('--weight-decay', type=float, default=0.0,
-                    help='weight-decay, acts as L2 regularizer (default: 0.0)')
+parser.add_argument('--lr-factor', type=float, default=0.5,
+                    help='learning rate reduction factor when change with ReduceLROnPlateau (default: 0.5)')
+parser.add_argument('--lr-patience', type=int, default=20,
+                    help='learning rate wait period before change with ReduceLROnPlateau (default: 20)')
+parser.add_argument('--lr-cooldown', type=int, default=10,
+                    help='learning rate wait period after change with ReduceLROnPlateau (default: 10)')
+parser.add_argument('--lr-epochs', default=[100,150,200,250], nargs='*',type=int,
+                    help='list of epochs which to decay by lr-factor, used with "step" option of lr-scheduler (MultiStepLR) (default: [100,150,200,250])')
+
+parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',default=0.0,
+                    help='weight-decay, acts as L2 regularizer (default: None if no floag, 1e-4 if flag but no value)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
 parser.add_argument('--epochs', type=int, default=20,
@@ -79,6 +93,10 @@ parser.add_argument('--accumulate', action='store_true',
                     help='accumulate gradients over entire batch, i.e. shot (default: False)')
 parser.add_argument('--undersample', type=float, nargs='?',const=1.0,
                     help='fraction of non-disruptive/disruptive subsequences (default: None if no flag, 1.0 if flag but no value)')
+parser.add_argument('--oversample', type=int, nargs='?',const=5,
+                    help='''Duplicate pos samples, match with equal neg samples (default: None if no flag, 5 if flag but no value) 
+                               (e.g. if total N = Npos + Nneg, and Nneg/Npos = 10, oversample=2 will set the # positive samples as 2*Npos, and
+                               # negative samples as 2*Npos (i.e. 5x smaller than available) )''')
 #other
 parser.add_argument('--cuda', action='store_false',
                     help='use CUDA (default: True)')
@@ -119,6 +137,10 @@ parser.add_argument('--plot', action='store_true',
                     help='plot validation disruptive sequences (default: False)')
 parser.add_argument('--flattop-only', action='store_true',
                     help='use only data from the current flattop (default: False)')
+parser.add_argument('--amp', action='store_true',
+                    help='use automatic mixed-precision (default: False)')
+parser.add_argument('--opt-level', default='O1', type=str,
+                    help='Optimization level for AMP (default: O1)')
 
 
 
@@ -196,31 +218,42 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #create TCN model
     model = create_model(args)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
+    if args.gpu is not None:
+        torch.cuda.set_device(args.gpu)
+        model.cuda(args.gpu)
+    if args.amp: amp.register_float_function(torch, 'sigmoid') #needed because F.binary_cross_entropy
+    model, optimizer = amp.initialize(model, optimizer, enabled=args.amp, opt_level=args.opt_level)
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
         # DistributedDataParallel will use all available devices.
         if args.gpu is not None:
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
             #TODO: I am making batch_size per process. Generalize?
             # When using a single GPU per process and per
             # DistributedDataParallel, we need to divide the batch size
             # ourselves based on the total number of GPUs we have
             #args.batch_size = int(args.batch_size / ngpus_per_node)
             #args.workers = int(args.workers / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+            if args.amp:
+                if args.rank==0: print("WARNING: amp for DistributedDataParallel assumes 1:1 GPU to process")
+                model = apex.parallel.DistributedDataParallel(model)
+            else:
+                model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
             # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-    elif args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
+            if args.amp:
+                model = apex.parallel.DistributedDataParallel(model)
+            else:
+                model = torch.nn.parallel.DistributedDataParallel(model)
     else:
         model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model)
+        if args.amp:
+            model = apex.parallel.DistributedDataParallel(model)
+        else:
+            model = torch.nn.parallel.DistributedDataParallel(model)
         # DataParallel will divide and allocate batch_size to all available GPUs
         # model = torch.nn.DataParallel(model).cuda()
 
@@ -239,7 +272,8 @@ def main_worker(gpu,ngpus_per_node,args):
     train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                             distributed=args.distributed,
                                                             num_workers=args.workers,
-                                                            undersample=args.undersample)
+                                                            undersample=args.undersample,
+                                                            oversample=args.oversample)
 
     #set defaults for iterations_warmup (5 epochs) and iterations_valid (1 epoch)
     #TODO Add separate argsparse for epochs_warmup and epochs_valid?
@@ -254,9 +288,8 @@ def main_worker(gpu,ngpus_per_node,args):
     #TODO generalize momentum?
     #TODO implement general optimizer
     if not args.lr_finder:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
         #gradual linear increasing learning rate for warmup
-        lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*iteration+1./args.multiplier_warmup
+        lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*(iteration+1) + 1./args.multiplier_warmup
         scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
         #decaying learning rate scheduler for after warmup
         #TODO generalize factor?
@@ -264,12 +297,17 @@ def main_worker(gpu,ngpus_per_node,args):
             mode = 'max'
         else:
             mode = 'min'
-        scheduler_plateau = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=0.5,
-                                                                       min_lr=args.lr/20,
-                                                                       patience=20,
-                                                                       cooldown=10,
+        if 'plateau' in args.lr_scheduler:
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,factor=args.lr_factor,
+                                                                       min_lr=args.lr*args.lr_factor**4,
+                                                                       patience=args.lr_patience,
+                                                                       cooldown=args.lr_cooldown,
                                                                        mode=mode,
                                                                        threshold=0.01)
+        else:
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                [lr_epoch*len(train_loader) for lr_epoch in args.lr_epochs],
+                                gamma=args.lr_factor)
     else:
         lr_history = {"lr": [], "loss": []}
         ninterval = 800 #number of intervals (one interval is one learning rate value)
@@ -291,7 +329,7 @@ def main_worker(gpu,ngpus_per_node,args):
             slurm_resume_id = ''.join(filter(str.isdigit, args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
+            best_f1 = checkpoint['best_f1']
             #if args.gpu is not None:
             #    # best_acc may be from a checkpoint from a different GPU
             #    best_acc = best_acc.to(args.gpu)
@@ -309,10 +347,15 @@ def main_worker(gpu,ngpus_per_node,args):
             
             #NOTE: to reuse the train_inds, etc. as defined by the splits file, the undersample has to
             #      be turned off here
+            #      But oversample has to be on if on, otherwise uses dataset as is
             train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
                                                         distributed=args.distributed,
                                                         num_workers=args.workers,
-                                                        undersample=None)
+                                                        undersample=None, oversample=args.oversample)
+            #fast-forward scheduler to be at right epoch
+            if 'step' in args.lr_scheduler:
+                for i in range(args.start_epoch*len(train_loader)): scheduler.step()
+
             print("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
         else:
@@ -322,14 +365,21 @@ def main_worker(gpu,ngpus_per_node,args):
     #save the train/val/test split, for further post-processing
     if args.rank==0:
         print(args)
+        if getattr(val_loader,'pos_used_indices',None) is not None:
+            val_pos_used_indices=val_loader.sampler.pos_used_indices
+            val_neg_used_indices=val_loader.sampler.neg_used_indices
+        else:
+            val_pos_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==1]
+            val_neg_used_indices=dataset.val_inds[dataset.disruptedi[dataset.val_inds]==0]
+
         np.savez('splits.'+os.environ['LSB_JOBID']+'.npz',
                     shot=dataset.shot,shot_idxi=dataset.shot_idxi,start_idxi=dataset.start_idxi,stop_idxi=dataset.stop_idxi,
                     disrupted=dataset.disrupted,disruptedi=dataset.disruptedi,
                     train_inds = dataset.train_inds,val_inds = dataset.val_inds, test_inds=dataset.test_inds,
                     train_pos_used_indices=train_loader.sampler.pos_used_indices,
                     train_neg_used_indices=train_loader.sampler.neg_used_indices,
-                    val_pos_used_indices=val_loader.sampler.pos_used_indices,
-                    val_neg_used_indices=val_loader.sampler.neg_used_indices,
+                    val_pos_used_indices=val_pos_used_indices,
+                    val_neg_used_indices=val_neg_used_indices,
                     test_pos_used_indices=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==1],
                     test_neg_used_indices=dataset.test_inds[dataset.disruptedi[dataset.test_inds]==0])
 
@@ -343,8 +393,8 @@ def main_worker(gpu,ngpus_per_node,args):
     steps = 0
     total_loss_lr = 0
     total_loss_log = 0
-    best_acc = 0
-    valid_f1 = None
+    best_f1 = 0
+    valid_f1 = 0
     val_iterator = cycle(val_loader) #cycle to cache data, since small for validation
     for epoch in range(args.start_epoch, args.epochs):
         nvtx.range_push("Epoch "+str(epoch))
@@ -385,22 +435,21 @@ def main_worker(gpu,ngpus_per_node,args):
             #validation
             if (iteration>0) & (iteration % args.iterations_valid == 0) & (args.test==0):
                 valid_loss, valid_acc, valid_f1, TP, TN, FP, FN,threshold = evaluate(val_iterator, model, args, len(val_loader))
-                acc = valid_acc
                 
                 if is_writer: 
                     writer.add_scalar('valid_loss',valid_loss,iteration)
                     writer.add_scalar('valid_acc',valid_acc,iteration)
                     writer.add_scalar('valid_f1',valid_f1,iteration)
-                # remember best acc and save checkpoint
-                is_best = acc > best_acc
-                best_acc = max(acc, best_acc)
+                # remember best f1 and save checkpoint
+                is_best = valid_f1 > best_f1
+                best_f1 = max(valid_f1, best_f1)
                  
                 if (not args.multiprocessing_distributed and args.rank==0) or \
                    (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
                     save_checkpoint({
                         'epoch': epoch + 1,
                         'state_dict': model.state_dict(),
-                        'best_acc': best_acc,
+                        'best_f1': best_f1,
                         'optimizer' : optimizer.state_dict(),
                         'args': args,
                         'confusion_matrix': {'TP':TP, 'TN':TN, 'FP':FP, 'FN':FN},
@@ -444,25 +493,28 @@ def main_worker(gpu,ngpus_per_node,args):
                 else:
                     #TODO change to be general outside of test
                     if args.test==0:
-                        if 'valid' in args.lr_step_metric:
-                            if (iteration>0) and (iteration % args.iterations_valid == (args.iterations_valid-1)):
-                                if 'valid_f1' in args.lr_step_metric:
-                                    metric = valid_f1
-                                else: #'valid_loss'
-                                    metric = valid_loss
-                                scheduler_plateau.step(metric)
+                        if 'plateau' in args.lr_scheduler:
+                            if 'valid' in args.lr_step_metric:
+                                if (iteration>0) and (iteration % args.iterations_valid == (args.iterations_valid-1)):
+                                    if 'valid_f1' in args.lr_step_metric:
+                                        metric = valid_f1
+                                    else: #'valid_loss'
+                                        metric = valid_loss
+                                    scheduler.step(metric)
+                            else:
+                                if (iteration>0) and (iteration % len(train_loader) == 0):
+                                    #validation metrics are already reduced across world_size, train_loss not
+                                    if args.distributed: 
+                                        total_loss_lr = all_reduce(total_loss_lr).item()
+                                        total_loss_lr = total_loss_lr/args.world_size/args.iterations_valid
+                                    metric = total_loss_lr
+                                    scheduler.step(metric)
+                                    total_loss_lr = 0
                         else:
-                            if (iteration>0) and (iteration % len(train_loader) == 0):
-                                #validation metrics are already reduced across world_size, train_loss not
-                                if args.distributed: 
-                                    total_loss_lr = all_reduce(total_loss_lr).item()
-                                    total_loss_lr = total_loss_lr/args.world_size/args.iterations_valid
-                                metric = total_loss_lr
-                                scheduler_plateau.step(metric)
-                                total_loss_lr = 0
+                            scheduler.step()
                     else:
                         if (iteration>0) and (iteration % len(train_loader) == 0):
-                            scheduler_plateau.step(total_loss_lr)
+                            scheduler.step(total_loss_lr)
     
             
             nvtx.range_pop() #end batch nvtx
@@ -538,9 +590,10 @@ def train_seq(data, target, weight, model, optimizer, args):
     loss = F.binary_cross_entropy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
     nvtx.range_pop()
     nvtx.range_push("Backward pass + optimizer step (train_seq)")
-    loss.backward()
+    with amp.scale_loss(loss,optimizer) as scaled_loss:
+        scaled_loss.backward()
     if args.clip is not None:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
     optimizer.step()
     nvtx.range_pop()
 
@@ -610,13 +663,17 @@ def evaluate(val_iterator,model,args,len_val_loader):
             #print('After all_reduce, Rank: ',str(args.rank),' Correct: ',*correct, ' Correct type: ',type(correct), 'Time: ',((time.time()-args.tstart)))
         f1 = f1_score(TPs,TPs+FPs,TPs+FNs)
         f1max = np.nanmax(f1)
+        mcc = mcc_score(TPs,FPs,TNs,FNs)
+        mccmax = np.nanmax(mcc)
         thresholdmax = args.thresholds[np.nanargmax(f1)]
+        tpr = (TPs/(TPs+FNs))[np.nanargmax(f1)]
+        fpr = (TNs/(TNs+FPs))[np.nanargmax(f1)]
         #
         correctmax = np.nanmax(correct).astype(int)
         if args.rank==0:
-            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tF1: {:.6e}\tThreshold: {:.2f}\tTime: {:.2f}\n'.format(
+            print('\nValidation set [{}]:\tAverage loss: {:.6e}\tAccuracy: {:.6e} ({}/{})\tTPR: {:.6e}\tFPR: {:.6e}\tF1: {:.6e}\tMCC: {:.6e}\tThreshold: {:.2f}\tTime: {:.2f}\n'.format(
                     len_val_loader,total_loss,
-                    correctmax / total, correctmax, total, f1max,thresholdmax,(time.time()-args.tstart)))
+                    correctmax / total, correctmax, total, tpr, fpr, f1max,mccmax,thresholdmax,(time.time()-args.tstart)))
         return total_loss,correctmax/total, f1max, TPs, TNs, FPs, FNs, thresholdmax
 
 
@@ -643,6 +700,13 @@ def f1_score(TP,TP_FP,TP_FN,eps=1e-10):
     precision = TP/TP_FP+eps
     recall = TP/TP_FN+eps
     return 2./(1./precision + 1./recall)
+
+def mcc_score(TP,FP,TN,FN):
+    denom = np.sqrt((TP+FP)*(TP+FN)*(TN+FP)*(TN+FN))
+    if np.any(denom==0): 
+        denom[denom==0] = 1 
+    mcc = ((TP*TN) - (FP*FN))/denom
+    return mcc
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

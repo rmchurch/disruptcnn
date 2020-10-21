@@ -267,7 +267,7 @@ class EceiDataset(data.Dataset):
 
 
 
-def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replicas=None,rank=None,undersample=None):
+def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replicas=None,rank=None,undersample=None,oversample=None):
     """Generate the loader objects for the train,validate, and test sets
     dataset: EceiDataset object
     distributed (optional): (True/False) using distributed workers
@@ -284,11 +284,17 @@ def data_generator(dataset,batch_size,distributed=False,num_workers=0,num_replic
     test_dataset = data.Subset(dataset,dataset.test_inds)
 
     #shuffle dataset each epoch for training data using DistrbutedSampler. Also splits among workers. 
-    train_sampler = StratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.train_inds],distributed=distributed,undersample=undersample)
-    val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,stratify=dataset.disruptedi[dataset.val_inds],distributed=distributed,undersample=undersample)
+    train_sampler = StratifiedSampler(train_dataset,num_replicas=num_replicas,rank=rank,
+                                                    stratify=dataset.disruptedi[dataset.train_inds],
+                                                    distributed=distributed,
+                                                    undersample=undersample,oversample=oversample)
+    val_sampler = StratifiedSampler(val_dataset,num_replicas=num_replicas,rank=rank,
+                                                distributed=distributed,extend=False)
+                                                #stratify=dataset.disruptedi[dataset.val_inds],
+                                                #undersample=undersample,oversample=oversample) #need to decide if validation should have typical distributin instead of under/over sample
    
     #redo class weights, since they are based on non-undersampled datasets
-    if undersample is not None:
+    if (undersample is not None) or (oversample is not None):
         inds = np.array([dataset.train_inds[i] for i in train_sampler])
         dataset.calc_label_weights(inds=inds)
 

@@ -87,7 +87,7 @@ class Objective(object):
         self.Tmin = 30 #ms, minimum time before disruptin needed for mitigation
         self.Nmin = self.Tmin/self.dt
 
-    def calc_shot_confusion(self,thresh_low,thresh_high,Talarm,Tclass,plot=False):        
+    def calc_shot_confusion(self,thresh_low,thresh_high,Talarm,Tclass,plot_all=False,plot_disrupt=False):        
         Nalarm = Talarm/self.dt
         Nclass = Tclass/self.dt
         TP = 1e-10; FP = 1e-10; TN = 1e-10; FN = 1e-10
@@ -106,7 +106,7 @@ class Objective(object):
                     FP += 1
                 else:
                     TN += 1
-            if plot:
+            if plot_all or (self.disrupted[i] and plot_disrupt):
                 self.plot_data(i,alarms=alarms,disruptionind=self.disruptioninds[i])
                 plt.draw()
                 input("Hit enter to continue")

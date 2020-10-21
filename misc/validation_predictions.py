@@ -37,8 +37,10 @@ def calc_prediction_single(shot_example,model,args,dataset,disrupt=False):
     x = (data - dataset.normalize_mean[...,np.newaxis])/dataset.normalize_std[...,np.newaxis]
     x = torch.tensor(x[np.newaxis,...])
     x = x.view(1, args.input_channels, -1)
-    x = x.cuda()
-    return model(x).cpu().detach().numpy()
+    with torch.no_grad():
+        x = x.cuda()
+        out = model(x).cpu().detach().numpy()
+    return out
 
 def calc_predictions(model_file,splits_file):
     #load model file
@@ -81,6 +83,7 @@ def calc_predictions(model_file,splits_file):
     fw.attrs['model_file'] = model_file
     fw.attrs['splits_file'] = splits_file
     grp = fw.create_group('preds')
+    tstart = time.time()
     for i,shot in enumerate(shots_val): 
         ind = np.where(dataset.shot==shot)[0]
         start_idx_val += [dataset.start_idx[ind]]
@@ -89,6 +92,7 @@ def calc_predictions(model_file,splits_file):
         disrupted_val += [dataset.disrupted[ind]]
         pred = calc_prediction_single(shot,model,args,dataset,disrupt=disrupted_val[i])
         dset = grp.create_dataset(str(shot),shape=pred.shape, data=pred)
+        print("Index %d/%d, Shot %d completed, Time: %0.2f" % (i,shots_val.size,shot,time.time()-tstart))
     fw.create_dataset('shots_val',shape=shots_val.shape,data=shots_val)
     fw.create_dataset('start_idx_val',shape=(len(start_idx_val),),data=np.array(start_idx_val))
     fw.create_dataset('stop_idx_val',shape=(len(stop_idx_val),),data=np.array(stop_idx_val))
