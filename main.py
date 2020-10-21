@@ -19,6 +19,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from itertools import cycle
+#apex
+import apex
+from apex import amp
 #pyprof
 import torch.cuda.profiler as profiler
 #import pyprof
@@ -134,6 +137,10 @@ parser.add_argument('--plot', action='store_true',
                     help='plot validation disruptive sequences (default: False)')
 parser.add_argument('--flattop-only', action='store_true',
                     help='use only data from the current flattop (default: False)')
+parser.add_argument('--amp', action='store_true',
+                    help='use automatic mixed-precision (default: False)')
+parser.add_argument('--opt-level', default='O1', type=str,
+                    help='Optimization level for AMP (default: O1)')
 
 
 
@@ -211,31 +218,42 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #create TCN model
     model = create_model(args)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
+    if args.gpu is not None:
+        torch.cuda.set_device(args.gpu)
+        model.cuda(args.gpu)
+    if args.amp: amp.register_float_function(torch, 'sigmoid') #needed because F.binary_cross_entropy
+    model, optimizer = amp.initialize(model, optimizer, enabled=args.amp, opt_level=args.opt_level)
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
         # DistributedDataParallel will use all available devices.
         if args.gpu is not None:
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
             #TODO: I am making batch_size per process. Generalize?
             # When using a single GPU per process and per
             # DistributedDataParallel, we need to divide the batch size
             # ourselves based on the total number of GPUs we have
             #args.batch_size = int(args.batch_size / ngpus_per_node)
             #args.workers = int(args.workers / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+            if args.amp:
+                if args.rank==0: print("WARNING: amp for DistributedDataParallel assumes 1:1 GPU to process")
+                model = apex.parallel.DistributedDataParallel(model)
+            else:
+                model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
         else:
             model.cuda()
             # DistributedDataParallel will divide and allocate batch_size to all
             # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-    elif args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
+            if args.amp:
+                model = apex.parallel.DistributedDataParallel(model)
+            else:
+                model = torch.nn.parallel.DistributedDataParallel(model)
     else:
         model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model)
+        if args.amp:
+            model = apex.parallel.DistributedDataParallel(model)
+        else:
+            model = torch.nn.parallel.DistributedDataParallel(model)
         # DataParallel will divide and allocate batch_size to all available GPUs
         # model = torch.nn.DataParallel(model).cuda()
 
@@ -270,7 +288,6 @@ def main_worker(gpu,ngpus_per_node,args):
     #TODO generalize momentum?
     #TODO implement general optimizer
     if not args.lr_finder:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
         #gradual linear increasing learning rate for warmup
         lambda1=lambda iteration: (1.-1./args.multiplier_warmup)/args.iterations_warmup*(iteration+1) + 1./args.multiplier_warmup
         scheduler_warmup = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
@@ -573,9 +590,10 @@ def train_seq(data, target, weight, model, optimizer, args):
     loss = F.binary_cross_entropy(output[...,args.nrecept-1:],target[...,args.nrecept-1:],weight=weight[...,args.nrecept-1:])
     nvtx.range_pop()
     nvtx.range_push("Backward pass + optimizer step (train_seq)")
-    loss.backward()
+    with amp.scale_loss(loss,optimizer) as scaled_loss:
+        scaled_loss.backward()
     if args.clip is not None:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
     optimizer.step()
     nvtx.range_pop()
 
