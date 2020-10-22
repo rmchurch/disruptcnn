@@ -730,7 +730,7 @@ def create_model(args):
     model = TCN(args.input_channels, args.n_classes, channel_sizes, 
                 kernel_size=args.kernel_size, 
                 dropout=args.dropout,
-                dilation_size=dilation_sizes)
+                dilation_size=dilation_sizes,nsub=args.nsub)
     return model
 
 def calc_seq_length(kernel_size,dilation_sizes,nlevel):

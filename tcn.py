@@ -38,6 +38,8 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
 import numpy as np
+#from apex.parallel import SyncBatchNorm as batch_norm
+from torch.nn import LayerNorm
 #import torch.nn.init as init
 
 
@@ -51,10 +53,12 @@ class Chomp1d(nn.Module):
 
 
 class TemporalBlock(nn.Module):
-    def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, padding, dropout=0.2):
+    def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, padding, dropout=0.2, nsub=None):
         super(TemporalBlock, self).__init__()
-        self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
-                                           stride=stride, padding=padding, dilation=dilation))
+        #self.norm1 = batch_norm(n_inputs)
+        self.norm1 = LayerNorm(nsub)
+        self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
+                                           stride=stride, padding=padding, dilation=dilation)
         # self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
         #                            stride=stride, padding=padding, dilation=dilation)
         # init.constant(self.conv1.weight, 1.0)
@@ -64,8 +68,10 @@ class TemporalBlock(nn.Module):
         self.relu1 = nn.ReLU()
         self.dropout1 = nn.Dropout(dropout)
 
-        self.conv2 = weight_norm(nn.Conv1d(n_outputs, n_outputs, kernel_size,
-                                           stride=stride, padding=padding, dilation=dilation))
+        #self.norm2 = batch_norm(n_outputs)
+        self.norm2 = LayerNorm(nsub)
+        self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
+                                           stride=stride, padding=padding, dilation=dilation)
         # self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
         #                                    stride=stride, padding=padding, dilation=dilation)
         # init.constant(self.conv2.weight, 1.0)
@@ -75,8 +81,10 @@ class TemporalBlock(nn.Module):
         self.relu2 = nn.ReLU()
         self.dropout2 = nn.Dropout(dropout)
 
-        self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
-                                 self.conv2, self.chomp2, self.relu2, self.dropout2)
+        #self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
+        #                         self.conv2, self.chomp2, self.relu2, self.dropout2)
+        self.net = nn.Sequential(self.norm1, self.relu1, self.conv1, self.chomp1,
+                                 self.norm2, self.relu2, self.conv2, self.chomp2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
         self.relu = nn.ReLU()
         self.init_weights()
@@ -88,13 +96,23 @@ class TemporalBlock(nn.Module):
             self.downsample.weight.data.normal_(0, 0.01)
 
     def forward(self, x):
-        out = self.net(x)
+        #write out components for testing
+        x1 = self.norm1(x)
+        x2 = self.relu1(x1)
+        x3 = self.conv1(x2)
+        x4 = self.chomp1(x3)
+        x5 = self.norm2(x4)
+        x6 = self.relu2(x5)
+        x7 = self.conv2(x6)
+        out = self.chomp2(x7)
+        #out = self.net(x)
         res = x if self.downsample is None else self.downsample(x)
-        return self.relu(out + res)
+        #return self.relu(out + res)
+        return out + res
 
 
 class TemporalConvNet(nn.Module):
-    def __init__(self, num_inputs, num_channels, dilation_size = 2, kernel_size=2, dropout=0.2):
+    def __init__(self, num_inputs, num_channels, dilation_size = 2, kernel_size=2, dropout=0.2, nsub=None):
         super(TemporalConvNet, self).__init__()
         layers = []
         num_levels = len(num_channels)
@@ -105,7 +123,7 @@ class TemporalConvNet(nn.Module):
             out_channels = num_channels[i]
             layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1,
                                      padding=(kernel_size-1) * dilation, dilation=dilation, 
-                                     dropout=dropout)]
+                                     dropout=dropout, nsub=nsub)]
 
         self.network = nn.Sequential(*layers)
 
