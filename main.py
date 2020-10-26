@@ -446,6 +446,7 @@ def main_worker(gpu,ngpus_per_node,args):
                  
                 if (not args.multiprocessing_distributed and args.rank==0) or \
                    (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    check_file = 'checkpoint.'+os.environ['LSB_JOBID']+'.epoch.'+str(epoch+1)+'.pth.tar'
                     save_checkpoint({
                         'epoch': epoch + 1,
                         'state_dict': model.state_dict(),
@@ -455,7 +456,7 @@ def main_worker(gpu,ngpus_per_node,args):
                         'confusion_matrix': {'TP':TP, 'TN':TN, 'FP':FP, 'FN':FN},
                         'f1': valid_f1,
                         'threshold': threshold,
-                    }, is_best,filename='checkpoint.'+os.environ['LSB_JOBID']+'.pth.tar')
+                    }, is_best,filename=check_file)
             
             #log training 
             if (iteration>0) & (iteration % args.log_interval == (args.log_interval-1)):
