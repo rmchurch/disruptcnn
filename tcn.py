@@ -69,7 +69,7 @@ class TemporalBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
 
         #self.norm2 = batch_norm(n_outputs)
-        self.norm2 = LayerNorm([n_inputs,nsub])
+        self.norm2 = LayerNorm([n_outputs,nsub])
         self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation)
         # self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
