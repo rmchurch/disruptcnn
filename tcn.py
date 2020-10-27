@@ -83,8 +83,8 @@ class TemporalBlock(nn.Module):
 
         #self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
         #                         self.conv2, self.chomp2, self.relu2, self.dropout2)
-        self.net = nn.Sequential(self.norm1, self.relu1, self.conv1, self.chomp1,
-                                 self.norm2, self.relu2, self.conv2, self.chomp2)
+        self.net = nn.Sequential(self.norm1, self.relu1, self.conv1, self.chomp1, self.dropout1,
+                                 self.norm2, self.relu2, self.conv2, self.chomp2, self.dropout2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
         self.relu = nn.ReLU()
         self.init_weights()
@@ -97,15 +97,15 @@ class TemporalBlock(nn.Module):
 
     def forward(self, x):
         #write out components for testing
-        x1 = self.norm1(x)
-        x2 = self.relu1(x1)
-        x3 = self.conv1(x2)
-        x4 = self.chomp1(x3)
-        x5 = self.norm2(x4)
-        x6 = self.relu2(x5)
-        x7 = self.conv2(x6)
-        out = self.chomp2(x7)
-        #out = self.net(x)
+        #x1 = self.norm1(x)
+        #x2 = self.relu1(x1)
+        #x3 = self.conv1(x2)
+        #x4 = self.chomp1(x3)
+        #x5 = self.norm2(x4)
+        #x6 = self.relu2(x5)
+        #x7 = self.conv2(x6)
+        #out = self.chomp2(x7)
+        out = self.net(x)
         res = x if self.downsample is None else self.downsample(x)
         #return self.relu(out + res)
         return out + res
