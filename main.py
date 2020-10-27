@@ -559,13 +559,13 @@ def all_reduce(data,op=dist.ReduceOp.SUM):
 def plot_output(data,output,target,weight,args,filename='output.png',title=''):
     plt.clf()
     plt.subplot(311)
-    plt.plot(data[0,0,:].detach().cpu().numpy())
+    plt.plot(data[0,:].detach().cpu().numpy())
     plt.title(title)
     plt.subplot(312)
-    plt.plot(output[...,args.nrecept-1:].detach().cpu().numpy()[0,:])
-    plt.plot(target[...,args.nrecept-1:].detach().cpu().numpy()[0,:],'--')
+    plt.plot(output[...,args.nrecept-1:].detach().cpu().numpy())
+    plt.plot(target[...,args.nrecept-1:].detach().cpu().numpy(),'--')
     plt.subplot(313)
-    plt.plot(weight[...,args.nrecept-1:].detach().cpu().numpy()[0,:])
+    plt.plot(weight[...,args.nrecept-1:].detach().cpu().numpy())
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.05)
     plt.savefig(filename)
@@ -638,8 +638,8 @@ def evaluate(val_iterator,model,args,len_val_loader):
             #plot disruptive output
             if args.plot:
                 for (i,gi) in enumerate(global_index):
-                    if ((val_loader.dataset.dataset.disruptedi[gi]==1)):
-                        plot_output(data,output,target,weight,args,
+                    if ((target[i,...].max()>0)):
+                        plot_output(data[i,...],output[i,...],target[i,...],weight[i,...],args,
                                 filename='output_'+str(int(os.environ['LSB_JOBID']))+'_iteration_'+str(args.iteration)+'_ind_'+str(int(gi))+'.png',
                                 title='Loss: %0.4e' % float(loss))
 
