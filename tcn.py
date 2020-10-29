@@ -128,8 +128,8 @@ class TemporalConvNet(nn.Module):
             layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1,
                                      padding=(kernel_size-1) * dilation, dilation=dilation, 
                                      dropout=dropout, nsub=nsub)]
-        layers += LayerNorm(nsub)
-        layers += nn.ReLU()
+        layers += [LayerNorm(nsub)]
+        layers += [nn.ReLU()]
         self.network = nn.Sequential(*layers)
 
     def forward(self, x):
