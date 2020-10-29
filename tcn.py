@@ -61,10 +61,6 @@ class TemporalBlock(nn.Module):
         self.norm1 = LayerNorm(nsub)
         self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation)
-        # self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
-        #                            stride=stride, padding=padding, dilation=dilation)
-        # init.constant(self.conv1.weight, 1.0)
-        # init.constant(self.conv1.bias, 0.0)
         
         self.chomp1 = Chomp1d(padding)
         self.relu1 = nn.ReLU()
@@ -74,10 +70,6 @@ class TemporalBlock(nn.Module):
         self.norm2 = LayerNorm(nsub)
         self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation)
-        # self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
-        #                                    stride=stride, padding=padding, dilation=dilation)
-        # init.constant(self.conv2.weight, 1.0)
-        # init.constant(self.conv2.bias, 0.0)
 
         self.chomp2 = Chomp1d(padding)
         self.relu2 = nn.ReLU()
@@ -88,7 +80,7 @@ class TemporalBlock(nn.Module):
         self.net = nn.Sequential(                        self.conv1, self.chomp1, self.dropout1,
                                  self.norm2, self.relu2, self.conv2, self.chomp2, self.dropout2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        self.init_weights()
+        #self.init_weights()
 
     def init_weights(self):
         self.conv1.weight.data.normal_(0, 0.01)
@@ -97,15 +89,7 @@ class TemporalBlock(nn.Module):
             self.downsample.weight.data.normal_(0, 0.01)
 
     def forward(self, x):
-        #write out components for testing
-        #x1 = self.norm1(x)
-        #x2 = self.relu1(x1)
-        #x3 = self.conv1(x2)
-        #x4 = self.chomp1(x3)
-        #x5 = self.norm2(x4)
-        #x6 = self.relu2(x5)
-        #x7 = self.conv2(x6)
-        #out = self.chomp2(x7)
+        #pre-norm activation form (note, need to add LayerNorm and ReLU at end of TemporalConvNet)
         xin = self.relu1(self.norm1(x))
         out = self.net(xin)
         if self.downsample is not None:
