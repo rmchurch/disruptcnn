@@ -593,7 +593,7 @@ def train_seq(data, target, weight, model, optimizer, args):
     nvtx.range_push("Backward pass + optimizer step (train_seq)")
     with amp.scale_loss(loss,optimizer) as scaled_loss:
         scaled_loss.backward()
-    if args.clip is not None:
+    if args.clip > 0:
         torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
     optimizer.step()
     nvtx.range_pop()
