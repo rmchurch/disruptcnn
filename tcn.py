@@ -32,6 +32,8 @@
 #}
 #
 #modified slightly here for arbitrary dilation factors. 
+#also modified to use InstanceNorm (specified as LayerNorm with 1 input in Pytorch), and to be in the pre-norm
+#order, found in https://github.com/KaimingHe/resnet-1k-layers/blob/master/resnet-pre-act.lua
 #
 
 import torch
@@ -83,10 +85,9 @@ class TemporalBlock(nn.Module):
 
         #self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
         #                         self.conv2, self.chomp2, self.relu2, self.dropout2)
-        self.net = nn.Sequential(self.norm1, self.relu1, self.conv1, self.chomp1, self.dropout1,
+        self.net = nn.Sequential(                        self.conv1, self.chomp1, self.dropout1,
                                  self.norm2, self.relu2, self.conv2, self.chomp2, self.dropout2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        self.relu = nn.ReLU()
         self.init_weights()
 
     def init_weights(self):
@@ -105,9 +106,12 @@ class TemporalBlock(nn.Module):
         #x6 = self.relu2(x5)
         #x7 = self.conv2(x6)
         #out = self.chomp2(x7)
-        out = self.net(x)
-        res = x if self.downsample is None else self.downsample(x)
-        #return self.relu(out + res)
+        xin = self.relu1(self.norm1(x))
+        out = self.net(xin)
+        if self.downsample is not None:
+            res = self.downsample(xin)
+        else:
+            res = x
         return out + res
 
 
@@ -124,7 +128,8 @@ class TemporalConvNet(nn.Module):
             layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1,
                                      padding=(kernel_size-1) * dilation, dilation=dilation, 
                                      dropout=dropout, nsub=nsub)]
-
+        layers += LayerNorm(out_channels)
+        layers += nn.ReLU()
         self.network = nn.Sequential(*layers)
 
     def forward(self, x):
