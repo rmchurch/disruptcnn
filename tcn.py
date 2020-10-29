@@ -39,11 +39,17 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
+import torch.nn.functional as F
 import numpy as np
 #from apex.parallel import SyncBatchNorm as batch_norm
 from torch.nn import LayerNorm
 #import torch.nn.init as init
 
+
+#only needed because Power9 on Summit has pytorch1.5, in 1.6 GELU is in nn
+class GELU(nn.Module):
+    def forward(self,x):
+        return F.gelu(x)
 
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
@@ -63,7 +69,7 @@ class TemporalBlock(nn.Module):
                                            stride=stride, padding=padding, dilation=dilation)
         
         self.chomp1 = Chomp1d(padding)
-        self.relu1 = nn.ReLU()
+        self.relu1 = GELU() #nn.ReLU()
         self.dropout1 = nn.Dropout(dropout)
 
         #self.norm2 = batch_norm(n_outputs)
@@ -72,7 +78,7 @@ class TemporalBlock(nn.Module):
                                            stride=stride, padding=padding, dilation=dilation)
 
         self.chomp2 = Chomp1d(padding)
-        self.relu2 = nn.ReLU()
+        self.relu2 = GELU() #nn.ReLU()
         self.dropout2 = nn.Dropout(dropout)
 
         #self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
@@ -113,7 +119,7 @@ class TemporalConvNet(nn.Module):
                                      padding=(kernel_size-1) * dilation, dilation=dilation, 
                                      dropout=dropout, nsub=nsub)]
         layers += [LayerNorm(nsub)]
-        layers += [nn.ReLU()]
+        layers += [GELU()] #[nn.ReLU()]
         self.network = nn.Sequential(*layers)
 
     def forward(self, x):
