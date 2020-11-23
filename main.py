@@ -488,7 +488,7 @@ def main_worker(gpu,ngpus_per_node,args):
                     total_loss_lr = 0*total_loss_lr
             else:
                 if iteration < args.iterations_warmup:
-                    scheduler_warmup.step(iteration)
+                    scheduler_warmup.step()
                     if 'train' in args.lr_step_metric:
                         total_loss_lr = 0
                 else:

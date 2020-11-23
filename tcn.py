@@ -69,7 +69,7 @@ class TemporalBlock(nn.Module):
                                            stride=stride, padding=padding, dilation=dilation)
         
         self.chomp1 = Chomp1d(padding)
-        self.relu1 = GELU() #nn.ReLU()
+        self.relu1 = nn.GELU() #nn.ReLU()
         self.dropout1 = nn.Dropout(dropout)
 
         #self.norm2 = batch_norm(n_outputs)
@@ -78,7 +78,7 @@ class TemporalBlock(nn.Module):
                                            stride=stride, padding=padding, dilation=dilation)
 
         self.chomp2 = Chomp1d(padding)
-        self.relu2 = GELU() #nn.ReLU()
+        self.relu2 = nn.GELU() #nn.ReLU()
         self.dropout2 = nn.Dropout(dropout)
 
         #self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
@@ -119,7 +119,7 @@ class TemporalConvNet(nn.Module):
                                      padding=(kernel_size-1) * dilation, dilation=dilation, 
                                      dropout=dropout, nsub=nsub)]
         layers += [LayerNorm(nsub)]
-        layers += [GELU()] #[nn.ReLU()]
+        layers += [nn.GELU()] #[nn.ReLU()]
         self.network = nn.Sequential(*layers)
 
     def forward(self, x):
