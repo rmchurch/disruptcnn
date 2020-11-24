@@ -86,7 +86,7 @@ parser.add_argument('--iterations-warmup', type=int, const=200, nargs='?',
 parser.add_argument('--multiplier-warmup', type=float, default=8,
                     help='warmup divide initial lr factor (default: 8)')
 parser.add_argument('--optim', type=str, default='SGD',
-                    help='optimizer to use (default: SGD)')
+                    help='optimizer to use (default: "SGD", other valid options "adam")')
 parser.add_argument('--label-balance', type=str,default='const',
                     help="Type of label balancing. 'const' or 'none', (default: const)")
 parser.add_argument('--accumulate', action='store_true',
@@ -218,7 +218,10 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #create TCN model
     model = create_model(args)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
+    if args.optim.lower() is "adam":
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9,0.999), eps=1e-8, weight_decay=0.0)
+    else:
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
     if args.gpu is not None:
         torch.cuda.set_device(args.gpu)
         model.cuda(args.gpu)
