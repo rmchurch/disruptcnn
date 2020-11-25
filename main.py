@@ -220,6 +220,8 @@ def main_worker(gpu,ngpus_per_node,args):
     model = create_model(args)
     if args.optim.lower() is "adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9,0.999), eps=1e-8, weight_decay=0.0)
+    elif args.optim.lower() is "adamw":
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9,0.999), eps=1e-8, weight_decay=0.01)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
     if args.gpu is not None:
