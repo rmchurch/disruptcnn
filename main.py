@@ -26,7 +26,7 @@ from apex import amp
 import torch.cuda.profiler as profiler
 #import pyprof
 #pyprof.init()
-
+import ast
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - disruption ECEi')
 #model specific
@@ -57,7 +57,7 @@ parser.add_argument('--nsub', type=int, default=5000000,
 parser.add_argument('--lr', type=float, default=2e-3,
                     help='initial learning rate (default: 2e-3)')
 parser.add_argument('--lr-scheduler', type=str, default='plateau',
-                    help='Type of learning rate scheduler (default: "plateau", other valid option "step")')
+                    help='Type of learning rate scheduler (default: "plateau", other valid option "step","cosine")')
 parser.add_argument('--lr-step-metric', type=str, default='valid_f1',
                     help='Metric to use with ReduceLROnPlateau (default: valid_f1)')
 parser.add_argument('--lr-factor', type=float, default=0.5,
@@ -87,6 +87,8 @@ parser.add_argument('--multiplier-warmup', type=float, default=8,
                     help='warmup divide initial lr factor (default: 8)')
 parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: "SGD", other valid options "adam")')
+parser.add_argument('--adam-betas', type=str, default='(0.9,0.999)',
+                    help='beta values for adam optimizer as a string (default: "(0.9,0.999)")')
 parser.add_argument('--label-balance', type=str,default='const',
                     help="Type of label balancing. 'const' or 'none', (default: const)")
 parser.add_argument('--accumulate', action='store_true',
@@ -219,9 +221,11 @@ def main_worker(gpu,ngpus_per_node,args):
     #create TCN model
     model = create_model(args)
     if args.optim.lower() is "adam":
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9,0.999), eps=1e-8, weight_decay=0.0)
+        adam_betas = ast.literal_eval(args.adam_betas)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=0.0)
     elif args.optim.lower() is "adamw":
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9,0.999), eps=1e-8, weight_decay=0.01)
+        adam_betas = ast.literal_eval(args.adam_betas)
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=0.01)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
     if args.gpu is not None:
@@ -309,6 +313,8 @@ def main_worker(gpu,ngpus_per_node,args):
                                                                        cooldown=args.lr_cooldown,
                                                                        mode=mode,
                                                                        threshold=0.01)
+        elif 'cosine' in args.lr_scheduler:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,args.epochs,eta_min=args.lr/10.)
         else:
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                 [lr_epoch*len(train_loader) for lr_epoch in args.lr_epochs],
