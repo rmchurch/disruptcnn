@@ -314,7 +314,7 @@ def main_worker(gpu,ngpus_per_node,args):
                                                                        mode=mode,
                                                                        threshold=0.01)
         elif 'cosine' in args.lr_scheduler:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,args.epochs,eta_min=args.lr/10.)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,args.epochs*len(train_loader),eta_min=args.lr/10.)
         else:
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                 [lr_epoch*len(train_loader) for lr_epoch in args.lr_epochs],
