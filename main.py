@@ -70,6 +70,8 @@ parser.add_argument('--lr-epochs', default=[100,150,200,250], nargs='*',type=int
                     help='list of epochs which to decay by lr-factor, used with "step" option of lr-scheduler (MultiStepLR) (default: [100,150,200,250])')
 parser.add_argument('--lr-cosine-T-max', type=float, default=0.0,
                     help='Period in epochs over which to decrease cosine LR scheduler (default: epochs)')
+parser.add_argument('--lr-cosine-eta-min', type=float, default=0.0,
+                    help='Minimum LR to decay to for the cosine LR scheduler (default: 0.0)')
 
 parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',default=0.0,
                     help='weight-decay, acts as L2 regularizer (default: None if no floag, 1e-4 if flag but no value)')
@@ -318,7 +320,7 @@ def main_worker(gpu,ngpus_per_node,args):
         elif 'cosine' in args.lr_scheduler:
             if args.lr_cosine_T_max==0: args.lr_cosine_T_max=args.epochs
             args.lr_cosine_T_max = args.lr_cosine_T_max*len(train_loader) #convert from epochs to iterations
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,args.lr_cosine_T_max,eta_min=args.lr/10.)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,args.lr_cosine_T_max,eta_min=args.lr_cosine_eta_min)
         else:
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                 [lr_epoch*len(train_loader) for lr_epoch in args.lr_epochs],
