@@ -222,10 +222,10 @@ def main_worker(gpu,ngpus_per_node,args):
 
     #create TCN model
     model = create_model(args)
-    if args.optim.lower() is "adam":
+    if args.optim.lower()=="adam":
         adam_betas = ast.literal_eval(args.adam_betas)
         optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=0.0)
-    elif args.optim.lower() is "adamw":
+    elif args.optim.lower()=="adamw":
         adam_betas = ast.literal_eval(args.adam_betas)
         optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=0.01)
     else:
