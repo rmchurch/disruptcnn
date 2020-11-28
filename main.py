@@ -74,7 +74,7 @@ parser.add_argument('--lr-cosine-eta-min', type=float, default=0.0,
                     help='Minimum LR to decay to for the cosine LR scheduler (default: 0.0)')
 
 parser.add_argument('--weight-decay', type=float, const=1e-4, nargs='?',default=0.0,
-                    help='weight-decay, acts as L2 regularizer (default: None if no floag, 1e-4 if flag but no value)')
+                    help='weight-decay, acts as L2 regularizer (default: None if no flag, 1e-4 if flag but no value)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                             help='manual epoch number (useful on restarts)')
 parser.add_argument('--epochs', type=int, default=20,
@@ -226,10 +226,10 @@ def main_worker(gpu,ngpus_per_node,args):
     model = create_model(args)
     if args.optim.lower()=="adam":
         adam_betas = ast.literal_eval(args.adam_betas)
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=0.0)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=args.weight_decay)
     elif args.optim.lower()=="adamw":
         adam_betas = ast.literal_eval(args.adam_betas)
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=0.01)
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=args.weight_decay)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
     if args.gpu is not None:
