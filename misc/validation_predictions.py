@@ -32,6 +32,10 @@ def calc_prediction_single(shot_example,model,args,dataset,disrupt=False):
     offset = f['offsets'][...]
     data = f['LFS'][:,:,::args.data_step] - offset[...,np.newaxis]
     f.close()
+
+    N = data.shape[-1]
+    Nseq = int(np.ceil(N/args.nsub))
+
     #t = -50 + np.arange(data.shape[-1])*(1e-3*args.data_step)
     #normalize
     x = (data - dataset.normalize_mean[...,np.newaxis])/dataset.normalize_std[...,np.newaxis]
@@ -39,7 +43,11 @@ def calc_prediction_single(shot_example,model,args,dataset,disrupt=False):
     x = x.view(1, args.input_channels, -1)
     with torch.no_grad():
         x = x.cuda()
-        out = model(x).cpu().detach().numpy()
+        out = np.zeros((1,N))
+        for i in range(Nseq):
+            i1 = i*args.nsub - i*args.nrecept + i
+            i2 = i1 + args.nsub
+            out[...,i1+args.nrecept:i2] = model(x[...,i1:i2])[...,args.nrecept:].cpu().detach().numpy()
     return out
 
 def calc_predictions(model_file,splits_file):
@@ -63,8 +71,11 @@ def calc_predictions(model_file,splits_file):
     fsplits = np.load(splits_file)
     shot = fsplits['shot']
     shot_idxi = fsplits['shot_idxi']
+    train_inds = fsplits['train_inds']
     val_inds = fsplits['val_inds']
-    
+    test_inds = fsplits['test_inds']
+            
+
     shots_val = np.unique(shot[shot_idxi[val_inds]])
     shots_val.sort()
 
@@ -75,6 +86,14 @@ def calc_predictions(model_file,splits_file):
                           data_step=args.data_step,
                           nsub=args.nsub,nrecept=args.nrecept,
                           flattop_only=args.flattop_only)
+    
+    #recreate the loaders with the splits from before
+    #dataset.train_val_test_split(train_inds=train_inds,val_inds=val_inds,test_inds=test_inds)
+    
+    #train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
+    #                                            distributed=args.distributed,
+    #                                            num_workers=args.workers,
+    #                                            undersample=None, oversample=args.oversample)
     #create the indices for train/val/test split
     #calculate inference predictions for disruptive (pos) and clear (neg) sequences
     preds = []; start_idx_val = []; stop_idx_val = []; disrupt_idx_val = []; disrupted_val = []
