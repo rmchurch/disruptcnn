@@ -93,6 +93,8 @@ parser.add_argument('--optim', type=str, default='SGD',
                     help='optimizer to use (default: "SGD", other valid options "adam")')
 parser.add_argument('--adam-betas', type=str, default='(0.9,0.999)',
                     help='beta values for adam optimizer as a string (default: "(0.9,0.999)")')
+parser.add_argument('--adam-eps', type=float, default=1e-8,
+                    help='Adam epsilon parameter for avoiding divide by 0 (default: 1e-8)')
 parser.add_argument('--label-balance', type=str,default='const',
                     help="Type of label balancing. 'const' or 'none', (default: const)")
 parser.add_argument('--accumulate', action='store_true',
@@ -226,10 +228,10 @@ def main_worker(gpu,ngpus_per_node,args):
     model = create_model(args)
     if args.optim.lower()=="adam":
         adam_betas = ast.literal_eval(args.adam_betas)
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=args.weight_decay)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=adam_betas, eps=args.adam_eps, weight_decay=args.weight_decay)
     elif args.optim.lower()=="adamw":
         adam_betas = ast.literal_eval(args.adam_betas)
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=adam_betas, eps=1e-8, weight_decay=args.weight_decay)
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, betas=adam_betas, eps=args.adam_eps, weight_decay=args.weight_decay)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True,weight_decay=args.weight_decay)
     if args.gpu is not None:
