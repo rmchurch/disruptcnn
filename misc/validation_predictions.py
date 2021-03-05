@@ -38,15 +38,30 @@ def calc_prediction_single(shot_example,model,args,dataset,disrupt=False):
 
     #t = -50 + np.arange(data.shape[-1])*(1e-3*args.data_step)
     #normalize
+
+    ind_shot = np.where(dataset.shot==shot_example)[0]
+    inds_shot_idxis = np.where(dataset.shot_idxi==ind_shot)[0]
+    istart = int(dataset.start_idxi[inds_shot_idxis].min()/args.data_step)
+    iend = int(dataset.stop_idxi[inds_shot_idxis].max()/args.data_step)
+    i1s = [istart]
+    i2s = [istart + args.nsub]
+    while i2s[-1]<iend:
+        i1s.append(i2s[-1]  - args.nrecept + 1)
+        i2s.append(i1s[-1] + args.nsub)
+    out = np.zeros((1,N))
+
+
     x = (data - dataset.normalize_mean[...,np.newaxis])/dataset.normalize_std[...,np.newaxis]
     x = torch.tensor(x[np.newaxis,...])
     x = x.view(1, args.input_channels, -1)
     with torch.no_grad():
         x = x.cuda()
-        out = np.zeros((1,N))
-        for i in range(Nseq):
-            i1 = i*args.nsub - i*args.nrecept + i
-            i2 = i1 + args.nsub
+    #    out = np.zeros((1,N))
+    #    for i in range(Nseq):
+    #        i1 = i*args.nsub - i*args.nrecept + i
+    #        i2 = i1 + args.nsub
+    #        out[...,i1+args.nrecept:i2] = model(x[...,i1:i2])[...,args.nrecept:].cpu().detach().numpy()
+        for i1,i2 in zip(i1s,i2s):
             out[...,i1+args.nrecept:i2] = model(x[...,i1:i2])[...,args.nrecept:].cpu().detach().numpy()
     return out
 
@@ -89,7 +104,7 @@ def calc_predictions(model_file,splits_file):
     
     #recreate the loaders with the splits from before
     #dataset.train_val_test_split(train_inds=train_inds,val_inds=val_inds,test_inds=test_inds)
-    
+    #
     #train_loader, val_loader, test_loader = data_generator(dataset, args.batch_size, 
     #                                            distributed=args.distributed,
     #                                            num_workers=args.workers,
