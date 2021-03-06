@@ -82,17 +82,6 @@ def calc_predictions(model_file,splits_file):
     model = model.cuda() #assumed on GPU
     model.eval()
 
-    #read validation set
-    fsplits = np.load(splits_file)
-    shot = fsplits['shot']
-    shot_idxi = fsplits['shot_idxi']
-    train_inds = fsplits['train_inds']
-    val_inds = fsplits['val_inds']
-    test_inds = fsplits['test_inds']
-            
-
-    shots_val = np.unique(shot[shot_idxi[val_inds]])
-    shots_val.sort()
 
     #create dataset object for normalizations
     dataset = EceiDataset(data_root,clear_file,disrupt_file,
@@ -102,6 +91,15 @@ def calc_predictions(model_file,splits_file):
                           nsub=args.nsub,nrecept=args.nrecept,
                           flattop_only=args.flattop_only)
     
+    #read validation set
+    fsplits = np.load(splits_file)
+    shot = fsplits['shot']
+    shot_idxi = fsplits['shot_idxi']
+    train_inds = fsplits['train_inds']
+    val_inds = fsplits['val_inds']
+    test_inds = fsplits['test_inds']
+            
+
     #recreate the loaders with the splits from before
     #dataset.train_val_test_split(train_inds=train_inds,val_inds=val_inds,test_inds=test_inds)
     #
@@ -111,29 +109,32 @@ def calc_predictions(model_file,splits_file):
     #                                            undersample=None, oversample=args.oversample)
     #create the indices for train/val/test split
     #calculate inference predictions for disruptive (pos) and clear (neg) sequences
-    preds = []; start_idx_val = []; stop_idx_val = []; disrupt_idx_val = []; disrupted_val = []
     slurm_id = ''.join(filter(str.isdigit, model_file))
-    fw = h5py.File('validation_predictions_'+slurm_id+'.h5','w')
+    fw = h5py.File('predictions_'+slurm_id+'.h5','w')
     fw.attrs['model_file'] = model_file
     fw.attrs['splits_file'] = splits_file
-    grp = fw.create_group('preds')
-    tstart = time.time()
-    for i,shot in enumerate(shots_val): 
-        ind = np.where(dataset.shot==shot)[0]
-        start_idx_val += [dataset.start_idx[ind]]
-        stop_idx_val += [dataset.stop_idx[ind]]
-        disrupt_idx_val += [dataset.disrupt_idx[ind]]
-        disrupted_val += [dataset.disrupted[ind]]
-        pred = calc_prediction_single(shot,model,args,dataset,disrupt=disrupted_val[i])
-        dset = grp.create_dataset(str(shot),shape=pred.shape, data=pred)
-        print("Index %d/%d, Shot %d completed, Time: %0.2f" % (i,shots_val.size,shot,time.time()-tstart))
-    fw.create_dataset('shots_val',shape=shots_val.shape,data=shots_val)
-    fw.create_dataset('start_idx_val',shape=(len(start_idx_val),),data=np.array(start_idx_val))
-    fw.create_dataset('stop_idx_val',shape=(len(stop_idx_val),),data=np.array(stop_idx_val))
-    fw.create_dataset('disrupt_idx_val',shape=(len(disrupt_idx_val),),data=np.array(disrupt_idx_val))
-    fw.create_dataset('disrupted_val',shape=(len(disrupted_val),),data=np.array(disrupted_val))
-    fw.close()
-    
+    for setname,inds in zip(['val','test'],[val_inds,test_inds]):
+        preds = []; start_idx = []; stop_idx = []; disrupt_idx = []; disrupted = []
+        grp = fw.create_group('preds_'+setname)
+        shots_set = np.unique(shot[shot_idxi[inds]])
+        shots_set.sort()
+        tstart = time.time()
+        for i,shoti in enumerate(shots_set): 
+            ind = np.where(dataset.shot==shoti)[0]
+            start_idx += [dataset.start_idx[ind]]
+            stop_idx += [dataset.stop_idx[ind]]
+            disrupt_idx += [dataset.disrupt_idx[ind]]
+            disrupted += [dataset.disrupted[ind]]
+            pred = calc_prediction_single(shoti,model,args,dataset,disrupt=disrupted[i])
+            dset = grp.create_dataset(str(shoti),shape=pred.shape, data=pred)
+            print("Index %d/%d, Shot %d completed, Time: %0.2f" % (i,shotsi_set.size,shoti,time.time()-tstart))
+        fw.create_dataset('shots_'+setname,shape=shots_set.shape,data=shots_set)
+        fw.create_dataset('start_idx_'+setname,shape=(len(start_idx),),data=np.array(start_idx))
+        fw.create_dataset('stop_idx_'+setname,shape=(len(stop_idx),),data=np.array(stop_idx))
+        fw.create_dataset('disrupt_idx_'_setname,shape=(len(disrupt_idx),),data=np.array(disrupt_idx))
+        fw.create_dataset('disrupted_'+setname,shape=(len(disrupted),),data=np.array(disrupted))
+        fw.close()
+        
 #    np.savez('validation_predictions_'+slurm_id+'.npz',preds=preds, shots_val=shots_val,
 #                                                       model_file=model_file, splits_file=splits_file,
 #                                                       start_idx_val=start_idx_val,
