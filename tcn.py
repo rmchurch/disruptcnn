@@ -64,7 +64,7 @@ class TemporalBlock(nn.Module):
     def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, padding, dropout=0.2, nsub=None):
         super(TemporalBlock, self).__init__()
         #self.norm1 = batch_norm(n_inputs)
-        self.norm1 = LayerNorm(nsub,elementwise_affine=False)
+        self.norm1 = LayerNorm(nsub,elementwise_affine=True)
         self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation)
         
@@ -73,7 +73,7 @@ class TemporalBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
 
         #self.norm2 = batch_norm(n_outputs)
-        self.norm2 = LayerNorm(nsub,elementwise_affine=False)
+        self.norm2 = LayerNorm(nsub,elementwise_affine=True)
         self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation)
 
@@ -118,7 +118,7 @@ class TemporalConvNet(nn.Module):
             layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1,
                                      padding=(kernel_size-1) * dilation, dilation=dilation, 
                                      dropout=dropout, nsub=nsub)]
-        layers += [LayerNorm(nsub,elementwise_affine=False)]
+        layers += [LayerNorm(nsub,elementwise_affine=True)]
         layers += [nn.GELU()] #[nn.ReLU()]
         self.network = nn.Sequential(*layers)
 
