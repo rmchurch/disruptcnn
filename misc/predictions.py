@@ -111,9 +111,11 @@ def calc_predictions(model_file,splits_file):
     #calculate inference predictions for disruptive (pos) and clear (neg) sequences
     slurm_id = ''.join(filter(str.isdigit, model_file))
     fw = h5py.File('predictions_'+slurm_id+'.h5','w')
+    #fw = h5py.File('predictions_test_'+slurm_id+'.h5','w')
     fw.attrs['model_file'] = model_file
     fw.attrs['splits_file'] = splits_file
     for setname,inds in zip(['val','test'],[val_inds,test_inds]):
+    #for setname,inds in zip(['test'],[test_inds]):
         preds = []; start_idx = []; stop_idx = []; disrupt_idx = []; disrupted = []
         grp = fw.create_group('preds_'+setname)
         shots_set = np.unique(shot[shot_idxi[inds]])
@@ -127,11 +129,11 @@ def calc_predictions(model_file,splits_file):
             disrupted += [dataset.disrupted[ind]]
             pred = calc_prediction_single(shoti,model,args,dataset,disrupt=disrupted[i])
             dset = grp.create_dataset(str(shoti),shape=pred.shape, data=pred)
-            print("Index %d/%d, Shot %d completed, Time: %0.2f" % (i,shotsi_set.size,shoti,time.time()-tstart))
+            print("Index %d/%d, Shot %d completed, Time: %0.2f" % (i,shots_set.size,shoti,time.time()-tstart))
         fw.create_dataset('shots_'+setname,shape=shots_set.shape,data=shots_set)
         fw.create_dataset('start_idx_'+setname,shape=(len(start_idx),),data=np.array(start_idx))
         fw.create_dataset('stop_idx_'+setname,shape=(len(stop_idx),),data=np.array(stop_idx))
-        fw.create_dataset('disrupt_idx_'_setname,shape=(len(disrupt_idx),),data=np.array(disrupt_idx))
+        fw.create_dataset('disrupt_idx_'+setname,shape=(len(disrupt_idx),),data=np.array(disrupt_idx))
         fw.create_dataset('disrupted_'+setname,shape=(len(disrupted),),data=np.array(disrupted))
         fw.close()
         
